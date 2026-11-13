@@ -1,0 +1,13 @@
+{
+  "project": "Epoch: The Arkavian Tower",
+  "revision": "r002",
+  "date": "2026-11-13",
+  "source": "classroom-editor-pilot/dist/fixtures/epoch + Epoch RPG adapter",
+  "entry": "START-HERE.html",
+  "game": "game/index.html",
+  "editable": [
+    "game/pack.js",
+    "game/epoch-rpg.js"
+  ],
+  "scope": "Standalone classroom starter; not a full RPG or shared-world deployment"
+}

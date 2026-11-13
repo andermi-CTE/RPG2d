@@ -1,0 +1,4281 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Student game</title><link rel="icon" href="data:,"><style>* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  background-color: #111;
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  overflow: hidden;
+}
+
+#gameCanvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  border: 2px solid #333;
+}
+
+.game-wrap {
+  position: relative;
+  /* Fit the classroom preview without changing game coordinates. */
+  width: min(100vw, 150vh, 960px);
+  aspect-ratio: 3 / 2;
+}
+
+#authOverlay {
+  display: none;
+  position: absolute;
+  left: 50%;
+  bottom: 168px;
+  transform: translateX(-50%);
+  z-index: 2;
+}
+
+#authOverlay.visible {
+  display: block;
+}
+
+#btnGoogleSignIn {
+  font-family: Arial, sans-serif;
+  font-size: 16px;
+  font-weight: 600;
+  color: #1f1f1f;
+  background: #fff;
+  border: 1px solid #dadce0;
+  border-radius: 4px;
+  padding: 10px 18px;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+#btnGoogleSignIn:hover {
+  background: #f7f8f8;
+}
+
+#btnGoogleSignIn:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+</style></head><body><div class="game-wrap"><canvas id="gameCanvas" width="960" height="640"></canvas></div>
+<script>
+// Generated launch settings; keep this ID matched to the pack.
+window.FVGD_STANDALONE = {"packId":"epoch_teacher","schemaVersion":1};
+
+</script>
+<script>
+// TEACHER-OWNED: offline services for an exported student game.
+// Exports never load classroom sign-in, submissions, telemetry or cloud config.
+const authState = { activeSlot: 1, displayName: "" };
+function standaloneHomeName() {
+  return "home_" + window.FVGD_STANDALONE.packId;
+}
+
+// Leaving the home opens a small menu rather than a class-wide map.
+const standaloneMenu = {
+  name: "standaloneMenu",
+  create() { gameState.currentScene = this.name; },
+  update() {
+    if (!isTransitionBlockingInput() && input.isPressed("Enter")) {
+      sceneManager.changeScene(standaloneHomeName());
+    }
+  },
+  draw(ctx) {
+    ctx.fillStyle = "#101827";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.save();
+    ctx.textAlign = "center";
+    ctx.fillStyle = "white";
+    ctx.font = "26px monospace";
+    const pack = getStudentPack(window.FVGD_STANDALONE.packId);
+    ctx.fillText(pack.manifest.name, canvas.width / 2, 260);
+    ctx.font = "18px monospace";
+    ctx.fillText("Press Enter to return home", canvas.width / 2, 320);
+    ctx.restore();
+  },
+  exit() {}
+};
+
+</script>
+<script>
+// TEACHER-OWNED: grabs the canvas and 2D drawing context used by every scene.
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+
+canvas.width = 960;
+canvas.height = 640;
+
+console.log("Canvas ready.");
+
+</script>
+<script>
+// TEACHER-OWNED: progress that survives scene changes (visited homes, rewards, coins, position).
+const gameState = {
+  currentScene: "title",
+  playerName: "",
+  visitedHomes: [],
+  completedLevels: [],
+  unlockedRewards: [],
+  coins: 0,
+  settings: {
+    volume: 0.8,
+    debugMode: false, // Press F1 when you need the debugging overlay.
+    showCollision: false,
+    showPackReport: false
+  },
+  overworldPlayerPosition: {
+    x: 160,
+    y: 160
+  }
+};
+
+const LEVEL_COMPLETE_COINS = 10;
+
+function markHomeVisited(homeId) {
+  if (!isHomeVisited(homeId)) {
+    gameState.visitedHomes.push(homeId);
+  }
+}
+
+function isHomeVisited(homeId) {
+  return gameState.visitedHomes.includes(homeId);
+}
+
+function markLevelCompleted(levelId) {
+  if (!isLevelCompleted(levelId)) {
+    gameState.completedLevels.push(levelId);
+  }
+}
+
+function isLevelCompleted(levelId) {
+  return gameState.completedLevels.includes(levelId);
+}
+
+function unlockReward(rewardId) {
+  if (!hasReward(rewardId)) {
+    gameState.unlockedRewards.push(rewardId);
+  }
+}
+
+function hasReward(rewardId) {
+  return gameState.unlockedRewards.includes(rewardId);
+}
+
+function awardLevelCoins() {
+  gameState.coins = (gameState.coins || 0) + LEVEL_COMPLETE_COINS;
+}
+
+</script>
+<script>
+// TEACHER-OWNED: keyboard state. isPressed() is true only on the frame a key goes down.
+const input = {
+  held: {},
+  pressed: {},
+  pointerPressed: false,
+
+  isDown(code) {
+    return !!this.held[code];
+  },
+
+  isPressed(code) {
+    return !!this.pressed[code];
+  },
+
+  update() {
+    this.pressed = {};
+    this.pointerPressed = false;
+  }
+};
+
+const INPUT_CODES = [
+  "KeyW", "KeyA", "KeyS", "KeyD", "KeyR", "KeyJ", "KeyF", "KeyI", "KeyK", "KeyL", "KeyQ", "KeyH",
+  "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight",
+  "Enter", "KeyE", "Escape", "Space", "Tab", "Backspace",
+  "KeyY", "KeyN",
+  "ShiftLeft", "ShiftRight", "F1", "F2", "F3",
+  "Digit0", "Digit1", "Digit2", "Digit3", "Digit4",
+  "Digit5", "Digit6", "Digit7", "Digit8", "Digit9",
+  "Numpad0", "Numpad1", "Numpad2", "Numpad3", "Numpad4",
+  "Numpad5", "Numpad6", "Numpad7", "Numpad8", "Numpad9"
+];
+
+window.addEventListener("keydown", function (event) {
+  if (INPUT_CODES.includes(event.code)) {
+    if (!input.held[event.code]) {
+      input.pressed[event.code] = true;
+    }
+    input.held[event.code] = true;
+  }
+
+  if (event.code === "F1" || event.code === "F2" || event.code === "F3" || event.code === "Space" ||
+      (event.code === "Tab" && gameState.currentScene === "basketball")) {
+    event.preventDefault();
+  }
+});
+
+window.addEventListener("keyup", function (event) {
+  if (INPUT_CODES.includes(event.code)) {
+    input.held[event.code] = false;
+  }
+});
+
+// Convenience helpers used by player movement.
+function isMoveUp() {
+  return input.isDown("KeyW") || input.isDown("ArrowUp");
+}
+
+function isMoveDown() {
+  return input.isDown("KeyS") || input.isDown("ArrowDown");
+}
+
+function isMoveLeft() {
+  return input.isDown("KeyA") || input.isDown("ArrowLeft");
+}
+
+function isMoveRight() {
+  return input.isDown("KeyD") || input.isDown("ArrowRight");
+}
+
+// A click/tap is a one-frame action, like a fresh Space press. Only basketball uses it.
+canvas.addEventListener("pointerdown", function(event) {
+  if(event.button===0 && gameState.currentScene==="basketball") {
+    input.pointerPressed=true;event.preventDefault();
+  }
+});
+window.addEventListener("blur",function(){input.held={};input.pressed={};input.pointerPressed=false;});
+
+</script>
+<script>
+// TEACHER-OWNED: rectangle overlap and wall sliding.
+function isColliding(a, b) {
+  return (
+    a.x < b.x + b.width &&
+    a.x + a.width > b.x &&
+    a.y < b.y + b.height &&
+    a.y + a.height > b.y
+  );
+}
+
+// Horizontal and vertical movement are resolved separately so the player
+// can slide along walls instead of getting stuck in corners.
+function moveWithCollision(entity, dx, dy, solids) {
+  if (!solids || solids.length === 0) {
+    entity.x += dx;
+    entity.y += dy;
+    return;
+  }
+
+  entity.x += dx;
+  for (let i = 0; i < solids.length; i++) {
+    const solid = solids[i];
+    if (isColliding(entity, solid)) {
+      if (dx > 0) {
+        entity.x = solid.x - entity.width;
+      } else if (dx < 0) {
+        entity.x = solid.x + solid.width;
+      }
+    }
+  }
+
+  entity.y += dy;
+  for (let i = 0; i < solids.length; i++) {
+    const solid = solids[i];
+    if (isColliding(entity, solid)) {
+      if (dy > 0) {
+        entity.y = solid.y - entity.height;
+      } else if (dy < 0) {
+        entity.y = solid.y + solid.height;
+      }
+    }
+  }
+}
+
+function drawCollisionBox(ctx, rect, camera) {
+  if (!gameState.settings.showCollision) {
+    return;
+  }
+
+  const camX = camera ? camera.x : 0;
+  const camY = camera ? camera.y : 0;
+
+  ctx.strokeStyle = "#ff4444";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(rect.x - camX, rect.y - camY, rect.width, rect.height);
+}
+
+</script>
+<script>
+// TEACHER-OWNED: gravity and ground checks for platformer levels.
+function applyGravity(entity, gravity, maxFallSpeed) {
+  entity.vy += gravity;
+  if (entity.vy > maxFallSpeed) {
+    entity.vy = maxFallSpeed;
+  }
+}
+
+function isOnGround(entity, solids) {
+  const probe = {
+    x: entity.x + 2,
+    y: entity.y + entity.height,
+    width: entity.width - 4,
+    height: 2
+  };
+  for (let i = 0; i < solids.length; i++) {
+    if (isColliding(probe, solids[i])) {
+      return true;
+    }
+  }
+  return false;
+}
+
+</script>
+<script>
+// TEACHER-OWNED: camera follows the player on the overworld without moving world coords.
+class Camera {
+  constructor(viewWidth, viewHeight, worldWidth, worldHeight) {
+    this.x = 0;
+    this.y = 0;
+    this.width = viewWidth;
+    this.height = viewHeight;
+    this.worldWidth = worldWidth;
+    this.worldHeight = worldHeight;
+  }
+
+  follow(target) {
+    this.x = target.x + target.width / 2 - this.width / 2;
+    this.y = target.y + target.height / 2 - this.height / 2;
+    this.x = Math.max(0, Math.min(this.x, this.worldWidth - this.width));
+    this.y = Math.max(0, Math.min(this.y, this.worldHeight - this.height));
+  }
+}
+
+</script>
+<script>
+// TEACHER-OWNED: on-screen prompts, dialogue boxes, and the rewards bar.
+const UI_FONT = "16px monospace";
+
+function drawInteractionPrompt(ctx, text) {
+  const boxWidth = 420;
+  const boxHeight = 36;
+  const x = (canvas.width - boxWidth) / 2;
+  const y = canvas.height - 56;
+
+  ctx.fillStyle = "rgba(0, 0, 0, 0.75)";
+  ctx.fillRect(x, y, boxWidth, boxHeight);
+
+  ctx.fillStyle = "#ffffff";
+  ctx.font = UI_FONT;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, x + boxWidth / 2, y + boxHeight / 2);
+}
+
+function drawDialogueBox(ctx, speaker, text) {
+  const boxWidth = canvas.width - 80;
+  const boxHeight = 100;
+  const x = 40;
+  const y = canvas.height - boxHeight - 24;
+
+  ctx.fillStyle = "rgba(0, 0, 0, 0.8)";
+  ctx.fillRect(x, y, boxWidth, boxHeight);
+
+  ctx.fillStyle = "#ffffff";
+  ctx.font = UI_FONT;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  ctx.fillText(speaker + ":", x + 16, y + 12);
+  ctx.fillText(text, x + 16, y + 36);
+  ctx.fillText("(Enter / E: next, Esc: close)", x + 16, y + 72);
+}
+
+function drawRewardsBar(ctx) {
+  const coins = gameState.coins || 0;
+  const rewards = gameState.unlockedRewards || [];
+  if (coins === 0 && rewards.length === 0) {
+    return;
+  }
+
+  const labels = rewards.map(function (id) {
+    return getRewardLabel(id);
+  });
+  const parts = ["Coins: " + coins];
+  if (labels.length > 0) {
+    parts.push("Badges: " + labels.join(", "));
+  }
+  const text = parts.join("   ");
+  ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
+  ctx.fillRect(8, canvas.height - 32, Math.min(720, canvas.width - 16), 24);
+  ctx.fillStyle = "#ffe66d";
+  ctx.font = "14px monospace";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, 16, canvas.height - 20);
+}
+
+</script>
+<script>
+// TEACHER-OWNED: fade-to-black when changing scenes.
+const transition = {
+  active: false,
+  alpha: 0,
+  direction: "out",
+  speed: 0.05,
+  nextScene: null,
+  switched: false
+};
+
+function startTransition(nextSceneName) {
+  transition.active = true;
+  transition.alpha = 0;
+  transition.direction = "out";
+  transition.nextScene = nextSceneName;
+  transition.switched = false;
+}
+
+function updateTransition() {
+  if (!transition.active) {
+    return;
+  }
+
+  if (transition.direction === "out") {
+    transition.alpha += transition.speed;
+    if (transition.alpha >= 1) {
+      transition.alpha = 1;
+      if (!transition.switched && transition.nextScene) {
+        sceneManager.changeSceneImmediate(transition.nextScene);
+        transition.switched = true;
+      }
+      transition.direction = "in";
+    }
+  } else {
+    transition.alpha -= transition.speed;
+    if (transition.alpha <= 0) {
+      transition.alpha = 0;
+      transition.active = false;
+      transition.nextScene = null;
+      transition.switched = false;
+    }
+  }
+}
+
+function drawTransition(ctx) {
+  if (!transition.active || transition.alpha <= 0) {
+    return;
+  }
+
+  ctx.fillStyle = "rgba(0, 0, 0, " + transition.alpha + ")";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+}
+
+function isTransitionBlockingInput() {
+  return transition.active && transition.alpha > 0.4;
+}
+
+</script>
+<script>
+// TEACHER-OWNED: F1 overlay, F2 collision boxes, F3 student pack report.
+const debugStats = {
+  frameCount: 0,
+  elapsed: 0,
+  fps: 0
+};
+
+function updateDebugStats(deltaTime) {
+  debugStats.frameCount += 1;
+  debugStats.elapsed += deltaTime;
+  if (debugStats.elapsed >= 500) {
+    debugStats.fps = Math.round((debugStats.frameCount * 1000) / debugStats.elapsed);
+    debugStats.frameCount = 0;
+    debugStats.elapsed = 0;
+  }
+}
+
+function handleDebugInput() {
+  if (input.isPressed("F1")) {
+    gameState.settings.debugMode = !gameState.settings.debugMode;
+  }
+  if (input.isPressed("F2")) {
+    gameState.settings.showCollision = !gameState.settings.showCollision;
+  }
+  if (input.isPressed("F3")) {
+    gameState.settings.showPackReport = !gameState.settings.showPackReport;
+  }
+}
+
+// Students run from the browser only, so pack problems have to be visible in the game itself.
+function buildPackReportLines() {
+  const summary = getPackReportSummary();
+  const lines = [
+    "STUDENT PACK REPORT  (F3 to close)",
+    summary.loaded + " loaded   " + summary.rejected + " rejected   " + summary.warned + " with warnings",
+    ""
+  ];
+
+  if (summary.rejected === 0 && summary.warned === 0) {
+    lines.push("All packs loaded cleanly.");
+    return lines;
+  }
+
+  for (let i = 0; i < studentPackReports.length; i++) {
+    const report = studentPackReports[i];
+    if (report.status !== "rejected") {
+      continue;
+    }
+    lines.push("REJECTED  " + report.id);
+    for (let e = 0; e < report.errors.length; e++) {
+      lines.push("   " + report.errors[e]);
+    }
+  }
+
+  for (let i = 0; i < studentPackReports.length; i++) {
+    const report = studentPackReports[i];
+    if (report.status === "rejected" || report.warnings.length === 0) {
+      continue;
+    }
+    lines.push("WARNING   " + report.id);
+    for (let w = 0; w < report.warnings.length; w++) {
+      lines.push("   " + report.warnings[w]);
+    }
+  }
+
+  return lines;
+}
+
+function drawPackReport(ctx) {
+  if (!gameState.settings.showPackReport) {
+    return;
+  }
+
+  const lines = buildPackReportLines();
+  const maxLines = 30;
+  const shown = lines.slice(0, maxLines);
+  if (lines.length > maxLines) {
+    shown.push("... " + (lines.length - maxLines) + " more lines, press F12 for the console");
+  }
+
+  ctx.fillStyle = "rgba(0, 0, 0, 0.88)";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.font = "13px monospace";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+
+  for (let i = 0; i < shown.length; i++) {
+    const line = shown[i];
+    if (line.indexOf("REJECTED") === 0) {
+      ctx.fillStyle = "#ff6b6b";
+    } else if (line.indexOf("WARNING") === 0) {
+      ctx.fillStyle = "#f1c40f";
+    } else if (i === 0) {
+      ctx.fillStyle = "#00ff88";
+    } else {
+      ctx.fillStyle = "#dddddd";
+    }
+    ctx.fillText(line.slice(0, 104), 16, 16 + i * 16);
+  }
+}
+
+function drawDebugOverlay(ctx, info) {
+  if (!gameState.settings.debugMode) {
+    return;
+  }
+
+  const lines = [
+    "FPS: " + debugStats.fps,
+    "Scene: " + (info.sceneName || "unknown"),
+    "Player: " + Math.round(info.playerX || 0) + ", " + Math.round(info.playerY || 0),
+    "Camera: " + Math.round(info.cameraX || 0) + ", " + Math.round(info.cameraY || 0),
+    "Collision count: " + (info.collisionCount || 0),
+    "Homes registered: " + (info.homeCount || 0),
+    "Homes visited: " + gameState.visitedHomes.length,
+    "Badges: " + gameState.unlockedRewards.length,
+    "Coins: " + (gameState.coins || 0),
+    "Debug overlay: " + (gameState.settings.debugMode ? "ON" : "OFF"),
+    "Collision boxes: " + (gameState.settings.showCollision ? "ON" : "OFF")
+  ];
+
+  ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
+  ctx.fillRect(8, 8, 280, lines.length * 18 + 12);
+
+  ctx.fillStyle = "#00ff88";
+  ctx.font = "14px monospace";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+
+  for (let i = 0; i < lines.length; i++) {
+    ctx.fillText(lines[i], 16, 16 + i * 18);
+  }
+}
+
+</script>
+<script>
+// TEACHER-OWNED: save progress in the browser (localStorage), one key per file slot.
+const SAVE_SCHEMA_VERSION = 2;
+// Standalone projects on the same website must not overwrite one another or the hub.
+const SAVE_STORAGE_PREFIX = typeof window !== "undefined" && window.FVGD_STANDALONE
+  ? "fvgd.standalone." + window.FVGD_STANDALONE.packId + ".slot."
+  : "fvgd.save.slot.";
+
+function slotStorageKey(slotIndex) {
+  const slot = slotIndex || authState.activeSlot || 1;
+  return SAVE_STORAGE_PREFIX + slot;
+}
+
+function defaultOverworldPosition() {
+  return { x: 160, y: 160 };
+}
+
+function resetGameProgress() {
+  gameState.visitedHomes = [];
+  gameState.completedLevels = [];
+  gameState.unlockedRewards = [];
+  gameState.coins = 0;
+  gameState.overworldPlayerPosition = defaultOverworldPosition();
+  if (authState.displayName) {
+    gameState.playerName = authState.displayName;
+  }
+}
+
+function buildSavePayload() {
+  return {
+    schema_version: SAVE_SCHEMA_VERSION,
+    visitedHomes: gameState.visitedHomes.slice(),
+    completedLevels: gameState.completedLevels.slice(),
+    unlockedRewards: gameState.unlockedRewards.slice(),
+    coins: gameState.coins || 0,
+    overworldPlayerPosition: {
+      x: gameState.overworldPlayerPosition.x,
+      y: gameState.overworldPlayerPosition.y
+    },
+    settings: {
+      volume: gameState.settings.volume,
+      debugMode: gameState.settings.debugMode,
+      showCollision: gameState.settings.showCollision
+    },
+    playerName: gameState.playerName,
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function applySavePayload(payload) {
+  if (!payload) return false;
+  gameState.visitedHomes = payload.visitedHomes || [];
+  gameState.completedLevels = payload.completedLevels || [];
+  gameState.unlockedRewards = payload.unlockedRewards || [];
+  gameState.coins = typeof payload.coins === "number" ? payload.coins : 0;
+  gameState.overworldPlayerPosition = payload.overworldPlayerPosition || defaultOverworldPosition();
+  if (payload.settings) {
+    gameState.settings.volume = payload.settings.volume ?? gameState.settings.volume;
+    gameState.settings.debugMode = payload.settings.debugMode ?? gameState.settings.debugMode;
+    gameState.settings.showCollision = payload.settings.showCollision ?? gameState.settings.showCollision;
+  }
+  if (payload.playerName) {
+    gameState.playerName = payload.playerName;
+  }
+  return true;
+}
+
+function isOccupiedSave(payload) {
+  if (!payload) {
+    return false;
+  }
+  return (
+    (payload.visitedHomes && payload.visitedHomes.length > 0) ||
+    (payload.completedLevels && payload.completedLevels.length > 0) ||
+    (payload.unlockedRewards && payload.unlockedRewards.length > 0) ||
+    (payload.coins || 0) > 0
+  );
+}
+
+function saveLocal() {
+  try {
+    localStorage.setItem(slotStorageKey(), JSON.stringify(buildSavePayload()));
+    return true;
+  } catch (err) {
+    console.warn("saveLocal failed:", err);
+    return false;
+  }
+}
+
+function loadLocal(slotIndex) {
+  try {
+    const raw = localStorage.getItem(slotStorageKey(slotIndex));
+    if (!raw) return false;
+    return applySavePayload(JSON.parse(raw));
+  } catch (err) {
+    console.warn("loadLocal failed:", err);
+    return false;
+  }
+}
+
+function readLocalSlot(slotIndex) {
+  try {
+    const raw = localStorage.getItem(slotStorageKey(slotIndex));
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch (err) {
+    return null;
+  }
+}
+
+function clearLocal(slotIndex) {
+  localStorage.removeItem(slotStorageKey(slotIndex));
+}
+
+function saveGameProgress() {
+  saveLocal();
+  if (typeof saveCloud === "function") {
+    saveCloud();
+  }
+}
+
+</script>
+<script>
+// TEACHER-OWNED: student pack checks shared by the in-game F3 report and scripts/validate-packs.js.
+// Errors quarantine a pack (it will not load). Warnings still load but show up in the report.
+const PACK_ICON_COLORS = ["purple", "blue", "orange", "gray", "green", "red", "yellow"];
+const PACK_INTERACTABLE_TYPES = ["npc", "portal", "exit", "savePoint", "submitPoint"];
+const PACK_LEVEL_MODES = ["platformer", "topdown", "arena", "sports", "basketball", "soccer", "football", "ranch"];
+const PACK_ID_PATTERN = /^[a-z0-9_]+$/;
+const PACK_MIN_ROOM_SIZE = 5;
+const PACK_MAX_ROOM_SIZE = 40;
+
+function packIsNumber(value) {
+  return typeof value === "number" && isFinite(value);
+}
+
+function packIsPositive(value) {
+  return packIsNumber(value) && value > 0;
+}
+
+function packIsText(value) {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function createPackReport(packId) {
+  return {
+    id: packId || "(unknown)",
+    status: "loaded",
+    errors: [],
+    warnings: []
+  };
+}
+
+function checkManifest(manifest, report) {
+  if (!manifest || typeof manifest !== "object") {
+    report.errors.push("manifest: missing manifest object");
+    return;
+  }
+
+  if (!packIsText(manifest.id)) {
+    report.errors.push("manifest.id: missing or not a string");
+  } else if (!PACK_ID_PATTERN.test(manifest.id)) {
+    report.errors.push(
+      "manifest.id: '" + manifest.id + "' must be lowercase letters, numbers, and underscores only"
+    );
+  }
+
+  // A missing position crashes the overworld draw loop for the whole class.
+  const pos = manifest.position;
+  if (!pos || typeof pos !== "object") {
+    report.errors.push("manifest.position: missing (needs { x: number, y: number })");
+  } else if (!packIsNumber(pos.x) || !packIsNumber(pos.y)) {
+    report.errors.push("manifest.position: x and y must be numbers");
+  }
+
+  if (!packIsText(manifest.name)) {
+    report.warnings.push("manifest.name: missing, prompts will show the id instead");
+  }
+  if (!packIsText(manifest.author)) {
+    report.warnings.push("manifest.author: missing");
+  }
+  if (manifest.iconColor !== undefined && PACK_ICON_COLORS.indexOf(manifest.iconColor) === -1) {
+    report.warnings.push(
+      "manifest.iconColor: '" + manifest.iconColor + "' is not one of " + PACK_ICON_COLORS.join(", ")
+    );
+  }
+  if (manifest.width !== undefined && !packIsPositive(manifest.width)) {
+    report.warnings.push("manifest.width: must be a positive number, defaulting to 32");
+  }
+  if (manifest.height !== undefined && !packIsPositive(manifest.height)) {
+    report.warnings.push("manifest.height: must be a positive number, defaulting to 32");
+  }
+}
+
+function checkInteractable(item, index, pack, report) {
+  const label = "home.interactables[" + index + "]";
+
+  if (!item || typeof item !== "object") {
+    report.errors.push(label + ": not an object");
+    return null;
+  }
+  if (PACK_INTERACTABLE_TYPES.indexOf(item.type) === -1) {
+    report.errors.push(
+      label + ": type '" + item.type + "' is not one of " + PACK_INTERACTABLE_TYPES.join(", ")
+    );
+    return null;
+  }
+  if (!packIsNumber(item.tileX) || !packIsNumber(item.tileY)) {
+    report.errors.push(label + " (" + item.type + "): tileX and tileY must be numbers");
+    return null;
+  }
+  if (!packIsText(item.id)) {
+    report.warnings.push(label + " (" + item.type + "): missing id");
+  }
+  if (item.width !== undefined && !packIsPositive(item.width)) {
+    report.warnings.push(label + " (" + item.type + "): width must be positive, defaulting to 32");
+  }
+  if (item.height !== undefined && !packIsPositive(item.height)) {
+    report.warnings.push(label + " (" + item.type + "): height must be positive, defaulting to 32");
+  }
+
+  if (item.type === "npc") {
+    if (!packIsText(item.dialogueKey)) {
+      report.warnings.push(label + " (npc): missing dialogueKey, this NPC will not talk");
+    } else if (!pack.dialogue || !pack.dialogue[item.dialogueKey]) {
+      report.warnings.push(
+        label + " (npc): dialogueKey '" + item.dialogueKey + "' is not in this pack's dialogue block"
+      );
+    }
+  }
+
+  if (item.type === "portal") {
+    const levelId = item.levelId || item.platformerLevelId || (pack.manifest && (pack.manifest.levelId || pack.manifest.platformerLevelId));
+    if (!packIsText(levelId)) {
+      report.warnings.push(label + " (portal): no levelId, portal shows a placeholder message");
+    }
+  }
+
+  return item.type;
+}
+
+function checkHome(pack, report) {
+  const home = pack.home;
+
+  if (!home || typeof home !== "object") {
+    report.errors.push("home: missing home object");
+    return;
+  }
+
+  const width = home.width === undefined ? 20 : home.width;
+  const height = home.height === undefined ? 12 : home.height;
+
+  if (!packIsPositive(width) || !packIsPositive(height)) {
+    report.errors.push("home.width / home.height: must be positive numbers");
+  } else if (width < PACK_MIN_ROOM_SIZE || height < PACK_MIN_ROOM_SIZE) {
+    report.warnings.push(
+      "home: room is smaller than " + PACK_MIN_ROOM_SIZE + " tiles, walls may trap the player"
+    );
+  } else if (width > PACK_MAX_ROOM_SIZE || height > PACK_MAX_ROOM_SIZE) {
+    report.warnings.push("home: room is larger than " + PACK_MAX_ROOM_SIZE + " tiles and will overflow the canvas");
+  }
+
+  const spawn = home.spawnTile;
+  if (spawn && (!packIsNumber(spawn.x) || !packIsNumber(spawn.y))) {
+    report.warnings.push("home.spawnTile: x and y must be numbers, using the default spawn");
+  } else if (spawn && (spawn.x < 1 || spawn.y < 1 || spawn.x > width - 2 || spawn.y > height - 2)) {
+    report.warnings.push("home.spawnTile: outside the walls, the spawn will be moved inside");
+  }
+
+  if (!Array.isArray(home.interactables)) {
+    report.errors.push("home.interactables: missing or not an array");
+    return;
+  }
+
+  const seen = {};
+  for (let i = 0; i < home.interactables.length; i++) {
+    const type = checkInteractable(home.interactables[i], i, pack, report);
+    if (type) {
+      seen[type] = (seen[type] || 0) + 1;
+    }
+  }
+
+  if (!seen.exit) {
+    report.warnings.push("home: no working exit tile, players can only leave with Escape");
+  }
+  if (!seen.npc) {
+    report.warnings.push("home: no working npc tile");
+  }
+  if (!seen.portal) {
+    report.warnings.push("home: no working portal tile, the game cannot be reached");
+  }
+  if (!seen.savePoint) {
+    report.warnings.push("home: no working savePoint tile");
+  }
+  if (!seen.submitPoint) {
+    report.warnings.push("home: no working submitPoint tile, work cannot be submitted for review");
+  }
+}
+
+function checkDialogue(pack, report) {
+  const dialogue = pack.dialogue;
+  if (dialogue === undefined) {
+    return;
+  }
+  if (typeof dialogue !== "object" || dialogue === null || Array.isArray(dialogue)) {
+    report.errors.push("dialogue: must be an object of { key: { speaker, lines } }");
+    return;
+  }
+
+  const keys = Object.keys(dialogue);
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
+    const entry = dialogue[key];
+    const label = "dialogue." + key;
+
+    if (!entry || typeof entry !== "object") {
+      report.errors.push(label + ": not an object");
+      continue;
+    }
+    if (!packIsText(entry.speaker)) {
+      report.warnings.push(label + ": missing speaker name");
+    }
+    if (!Array.isArray(entry.lines) || entry.lines.length === 0) {
+      report.errors.push(label + ": lines must be a non-empty array of strings");
+      continue;
+    }
+    for (let j = 0; j < entry.lines.length; j++) {
+      if (!packIsText(entry.lines[j])) {
+        report.warnings.push(label + ": line " + j + " is empty");
+      }
+    }
+  }
+}
+
+function checkRect(rect, label, report, required) {
+  if (!rect || typeof rect !== "object") {
+    if (required) {
+      report.errors.push(label + ": missing");
+    }
+    return false;
+  }
+  if (!packIsNumber(rect.x) || !packIsNumber(rect.y)) {
+    report.errors.push(label + ": x and y must be numbers");
+    return false;
+  }
+  if (!packIsPositive(rect.width) || !packIsPositive(rect.height)) {
+    report.errors.push(label + ": width and height must be positive numbers");
+    return false;
+  }
+  return true;
+}
+
+function checkLevel(pack, report) {
+  const level = pack.level;
+  if (level === undefined) {
+    return;
+  }
+  if (typeof level !== "object" || level === null) {
+    report.errors.push("level: must be an object");
+    return;
+  }
+
+  const mode = level.mode === undefined ? "platformer" : level.mode;
+  if (PACK_LEVEL_MODES.indexOf(mode) === -1) {
+    report.errors.push(
+      "level.mode: '" + mode + "' is not supported yet, use one of " + PACK_LEVEL_MODES.join(", ")
+    );
+  }
+
+  if (!level.spawn || !packIsNumber(level.spawn.x) || !packIsNumber(level.spawn.y)) {
+    report.errors.push("level.spawn: missing (needs { x: number, y: number })");
+  }
+
+  checkRect(level.goal, "level.goal", report, true);
+
+  if (!Array.isArray(level.solids) || (mode === "platformer" && level.solids.length === 0)) {
+    report.errors.push("level.solids: must be an array (platformers need at least one platform)");
+  } else {
+    for (let i = 0; i < level.solids.length; i++) {
+      checkRect(level.solids[i], "level.solids[" + i + "]", report, true);
+    }
+  }
+
+  if (level.hazards !== undefined) {
+    if (!Array.isArray(level.hazards)) {
+      report.errors.push("level.hazards: must be an array");
+    } else {
+      for (let h = 0; h < level.hazards.length; h++) {
+        checkRect(level.hazards[h], "level.hazards[" + h + "]", report, true);
+      }
+    }
+  }
+}
+
+// Structural checks for a single pack, with no knowledge of the rest of the class.
+function validatePack(pack) {
+  const report = createPackReport(pack && pack.manifest ? pack.manifest.id : null);
+
+  if (!pack || typeof pack !== "object") {
+    report.errors.push("pack: registerStudentPack needs an object");
+    report.status = "rejected";
+    return report;
+  }
+
+  checkManifest(pack.manifest, report);
+  checkHome(pack, report);
+  checkDialogue(pack, report);
+  checkLevel(pack, report);
+  checkLevelObjectives(pack, report);
+  checkGameRoutingAndBounds(pack, report);
+  checkArenaCombat(pack, report);
+  checkSportsChallenge(pack, report);
+  checkBasketball(pack, report);
+  checkSoccer(pack, report);
+  checkFootball(pack, report);
+  checkRanch(pack, report);
+  checkShooter(pack, report);
+  checkPursuit(pack, report);
+  checkQuestInteractions(pack, report);
+
+  report.status = report.errors.length > 0 ? "rejected" : "loaded";
+  return report;
+}
+
+function rectsOverlap(a, b) {
+  return (
+    a.x < b.x + b.width &&
+    a.x + a.width > b.x &&
+    a.y < b.y + b.height &&
+    a.y + a.height > b.y
+  );
+}
+
+// Cross-pack checks that only make sense once the whole class is loaded.
+function validatePackRegistry(packs) {
+  const problems = [];
+  const byId = {};
+  const levelIds = {};
+  const icons = [];
+
+  for (let i = 0; i < packs.length; i++) {
+    const manifest = packs[i].manifest;
+    if (!manifest || !manifest.id) {
+      continue;
+    }
+
+    if (byId[manifest.id]) {
+      problems.push({
+        id: manifest.id,
+        message: "duplicate manifest.id '" + manifest.id + "' (ids must be unique across the class)"
+      });
+    }
+    byId[manifest.id] = true;
+
+    const levelId = manifest.levelId || manifest.platformerLevelId || (packs[i].level && packs[i].level.id);
+    if (levelId) {
+      if (levelIds[levelId]) {
+        problems.push({
+          id: manifest.id,
+          message: "platformerLevelId '" + levelId + "' is already used by " + levelIds[levelId]
+        });
+      } else {
+        levelIds[levelId] = manifest.id;
+      }
+    }
+
+    if (manifest.position && packIsNumber(manifest.position.x)) {
+      icons.push({
+        id: manifest.id,
+        x: manifest.position.x,
+        y: manifest.position.y,
+        width: manifest.width || 32,
+        height: manifest.height || 32
+      });
+    }
+  }
+
+  for (let a = 0; a < icons.length; a++) {
+    for (let b = a + 1; b < icons.length; b++) {
+      if (rectsOverlap(icons[a], icons[b])) {
+        problems.push({
+          id: icons[a].id,
+          message: "overworld icon overlaps " + icons[b].id + " — give one of them a new manifest.position"
+        });
+      }
+    }
+  }
+
+  return problems;
+}
+
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = { validatePack: validatePack, validatePackRegistry: validatePackRegistry };
+}
+
+// Optional version-1 objective fields. Old packs may omit every one of these.
+// Validate references before play so a misspelled key cannot silently lock a game.
+function checkLevelObjectives(pack, report) {
+  if (pack.schemaVersion !== undefined && pack.schemaVersion !== 1) {
+    report.errors.push("schemaVersion: only version 1 is supported");
+  }
+  const level = pack.level;
+  if (!level || typeof level !== "object") return;
+  function list(name) {
+    if (level[name] === undefined) return [];
+    if (!Array.isArray(level[name])) {
+      report.errors.push("level." + name + ": must be an array");
+      return [];
+    }
+    return level[name];
+  }
+  function ids(items, name, rectangles) {
+    const known = new Set();
+    items.forEach(function (item, index) {
+      const label = "level." + name + "[" + index + "]";
+      if (!item || !packIsText(item.id) || !PACK_ID_PATTERN.test(item.id)) {
+        report.errors.push(label + ": needs an ID using lowercase letters, numbers and underscores");
+        return;
+      }
+      if (known.has(item.id)) report.errors.push(label + ": duplicate id " + item.id);
+      known.add(item.id);
+      if (rectangles) checkRect(item, label, report, true);
+    });
+    return known;
+  }
+  function references(refs, known, label, required) {
+    if (refs === undefined && !required) return;
+    if (!Array.isArray(refs) || (required && refs.length === 0)) {
+      report.errors.push(label + ": must be " + (required ? "a non-empty" : "an") + " array of IDs");
+      return;
+    }
+    if (new Set(refs).size !== refs.length) report.errors.push(label + ": repeated IDs");
+    refs.forEach(function (id) {
+      if (!known.has(id)) report.errors.push(label + ": unknown ID " + id);
+    });
+  }
+  const collectibles = list("collectibles");
+  const objectives = list("objectives");
+  const doors = list("doors");
+  const interactions = list("interactions");
+  const interactionIds = ids(interactions,"interactions",true);
+  const itemIds = ids(collectibles, "collectibles", true);
+  const objectiveIds = ids(objectives, "objectives", false);
+  ids(doors, "doors", true);
+  objectives.forEach(function (objective, index) {
+    if (!objective || typeof objective !== "object") return;
+    if (!packIsText(objective.label)) report.errors.push("objective " + index + ": needs a readable label");
+    references(objective.collect, itemIds, "objective " + index + ".collect", !(Array.isArray(objective.interact) && objective.interact.length));
+    references(objective.interact, interactionIds, "objective " + index + ".interact", !(Array.isArray(objective.collect) && objective.collect.length));
+  });
+  doors.forEach(function (door, index) {
+    if (door && typeof door === "object") references(door.requires, objectiveIds, "door " + index + ".requires", false);
+  });
+  interactions.forEach((item,index)=>{
+    if(!item||typeof item!=="object")return;
+    references(item.requires,objectiveIds,"interaction "+index+".requires",false);
+    references(item.needs,itemIds,"interaction "+index+".needs",false);
+  });
+  collectibles.forEach(item=>{if(item&&item.revealBy!==undefined&&!interactionIds.has(item.revealBy))report.errors.push("collectible.revealBy: unknown interaction ID");});
+  if (level.goal) references(level.goal.requires, objectiveIds, "goal.requires", false);
+}
+
+// New mode-neutral IDs must not disagree with a legacy alias or the pack's level.
+function checkGameRoutingAndBounds(pack, report) {
+  const manifest = pack.manifest || {};
+  const level = pack.level;
+  const expected = level && (level.id || manifest.id + "_level");
+  function checkRoute(item, label) {
+    if (!item) return;
+    if (item.levelId !== undefined && !packIsText(item.levelId)) report.errors.push(label + ".levelId: must be text");
+    if (item.levelId && item.platformerLevelId && item.levelId !== item.platformerLevelId) {
+      report.errors.push(label + ": levelId disagrees with platformerLevelId");
+    }
+    const target = item.levelId || item.platformerLevelId;
+    if (expected && target && target !== expected) report.errors.push(label + ": portal target must match this pack's level.id");
+  }
+  checkRoute(manifest, "manifest");
+  ((pack.home && Array.isArray(pack.home.interactables)) ? pack.home.interactables : []).forEach(function (item) {
+    if (item && item.type === "portal") checkRoute(item, "portal");
+  });
+  if (!level || (level.mode !== "topdown" && level.mode !== "arena")) return;
+  // This template has no scrolling camera. Reject hidden/out-of-screen objectives.
+  if (!Number.isInteger(level.width) || level.width < 64 || level.width > 960 ||
+      !Number.isInteger(level.height) || level.height < 64 || level.height > 640) {
+    report.errors.push("walking modes: width must be 64..960 and height 64..640, in whole pixels");
+    return;
+  }
+  function inside(rect, label) {
+    if (!rect || !packIsNumber(rect.x) || !packIsNumber(rect.y) || !packIsPositive(rect.width) || !packIsPositive(rect.height)) return;
+    if (rect.x < 0 || rect.y < 0 || rect.x + rect.width > level.width || rect.y + rect.height > level.height) {
+      report.errors.push(label + ": rectangle must fit inside the level");
+    }
+  }
+  inside(level.goal, "goal");
+  const spawn = level.spawn && {x:level.spawn.x, y:level.spawn.y, width:28, height:28};
+  inside(spawn, "spawn");
+  ["solids", "hazards", "collectibles", "doors"].forEach(function (name) {
+    if (Array.isArray(level[name])) level[name].forEach((rect,index) => inside(rect,name + "[" + index + "]"));
+  });
+  // Avoid spawning inside a wall, hazard or initially closed door.
+  const blockers = [].concat(Array.isArray(level.solids) ? level.solids : [],
+    Array.isArray(level.hazards) ? level.hazards : [],
+    Array.isArray(level.doors) ? level.doors.filter(d => d && Array.isArray(d.requires) && d.requires.length) : []);
+  if (spawn && blockers.some(rect => rect && rectsOverlap(spawn,rect))) report.errors.push("spawn: overlaps a wall, hazard or locked door");
+}
+
+// Arena settings are deliberately bounded so a typo cannot create an unplayable wave.
+function checkArenaCombat(pack, report) {
+  const level = pack.level;
+  if (!level || (level.mode !== "arena" && level.combat === undefined)) return;
+  const mode=level.mode || "platformer";
+  if(!["arena","platformer","topdown"].includes(mode))report.errors.push("combat: use arena, platformer or topdown mode");
+  if(level.shooter || level.pursuit)report.errors.push("combat: do not mix with shooter/pursuit in this version");
+  const combat = level.combat;
+  function number(value, min, max, label, integer) {
+    if (!packIsNumber(value) || value < min || value > max || (integer && !Number.isInteger(value))) {
+      report.errors.push(label + ": use " + (integer ? "a whole number " : "a number ") + min + ".." + max);
+    }
+  }
+  if (!combat || typeof combat !== "object" || Array.isArray(combat)) report.errors.push("combat: missing settings object");
+  else {
+    number(combat.playerHealth,1,20,"combat.playerHealth",true);
+    number(combat.attackDamage,1,10,"combat.attackDamage",true);
+    number(combat.attackReach,16,96,"combat.attackReach",false);
+    number(combat.attackCooldown,0.15,2,"combat.attackCooldown",false);
+    number(combat.invulnerabilitySeconds,0.3,3,"combat.invulnerabilitySeconds",false);
+  }
+  if (!Array.isArray(level.waves) || level.waves.length < 1 || level.waves.length > 10) {
+    report.errors.push("arena.waves: supply 1..10 waves");return;
+  }
+  const ids = new Set();
+  const blockers = [].concat(Array.isArray(level.solids) ? level.solids : [],
+    Array.isArray(level.hazards) ? level.hazards : [],
+    Array.isArray(level.doors) ? level.doors.filter(d => d && Array.isArray(d.requires) && d.requires.length) : []);
+  const spawn = level.spawn && {x:level.spawn.x,y:level.spawn.y,width:28,height:28};
+  // Combat adventures are one screen too. Validate platformer layouts as strictly as walking ones.
+  number(level.width,64,960,"combat level.width",true);number(level.height,64,640,"combat level.height",true);
+  const rectangles=[spawn,level.goal].concat(blockers,Array.isArray(level.collectibles)?level.collectibles:[]);
+  rectangles.forEach(rect=>{if(rect&&(rect.x<0||rect.y<0||rect.x+rect.width>level.width||rect.y+rect.height>level.height))report.errors.push("combat: layout rectangle outside level");});
+  if(spawn&&blockers.some(rect=>rect&&rectsOverlap(spawn,rect)))report.errors.push("combat: player spawn overlaps blocker");
+  level.waves.forEach(function (wave, w) {
+    if (!wave || !Array.isArray(wave.enemies) || wave.enemies.length < 1 || wave.enemies.length > 8) {
+      report.errors.push("wave " + w + ": supply 1..8 enemies");return;
+    }
+    wave.enemies.forEach(function (enemy, i) {
+      const label = "wave " + w + " enemy " + i;
+      if (!checkRect(enemy,label,report,true)) return;
+      if (!packIsText(enemy.id) || !PACK_ID_PATTERN.test(enemy.id) || ids.has(enemy.id)) report.errors.push(label + ": use a unique lowercase enemy ID");
+      ids.add(enemy.id);
+      number(enemy.width,8,64,label + ".width",false);number(enemy.height,8,64,label + ".height",false);
+      number(enemy.health,1,20,label + ".health",true);number(enemy.damage,1,10,label + ".damage",true);
+      number(enemy.speed,0,160,label + ".speed",false);
+      if(mode==="platformer" && !(Array.isArray(level.solids)?level.solids:[]).some(w=>w&&Math.abs(enemy.y+enemy.height-w.y)<0.1&&enemy.x>=w.x&&enemy.x+enemy.width<=w.x+w.width))report.errors.push(label+": platformer guard must start on solid ground");
+      if (enemy.x < 0 || enemy.y < 0 || enemy.x + enemy.width > level.width || enemy.y + enemy.height > level.height) report.errors.push(label + ": spawn outside level");
+      if (blockers.some(rect => rect && rectsOverlap(enemy,rect)) || (spawn && rectsOverlap(enemy,spawn))) report.errors.push(label + ": spawn overlaps a wall, hazard, locked door or player start");
+      if (wave.enemies.slice(0,i).some(other => other && rectsOverlap(enemy,other))) report.errors.push(label + ": overlaps another enemy spawn in this wave");
+    });
+  });
+}
+
+// Sports uses spawn as the BALL launch point and goal as the hoop rim.
+function checkSportsChallenge(pack, report) {
+  const level = pack.level;
+  if (!level || level.mode !== "sports") return;
+  function range(value,min,max,label,integer) {
+    if (!packIsNumber(value) || value < min || value > max || (integer && !Number.isInteger(value))) {
+      report.errors.push(label + ": use " + (integer ? "a whole number " : "a number ") + min + ".." + max);
+      return false;
+    }
+    return true;
+  }
+  // Keep this version one screen. Its background/scoreboard uses a 960x640 court.
+  if (level.width !== 960 || level.height !== 640) report.errors.push("sports: use a 960 by 640 court");
+  const c = level.challenge;
+  if (!c || typeof c !== "object") {report.errors.push("sports: missing challenge settings");return;}
+  range(c.targetScore,1,20,"challenge.targetScore",true);
+  range(c.timeLimit,5,180,"challenge.timeLimit",false);
+  range(c.startAngle,20,80,"challenge.startAngle",true);
+  range(c.startPower,300,900,"challenge.startPower",true);
+  range(c.gravity,100,1200,"challenge.gravity",false);
+  range(c.ballRadius,6,18,"challenge.ballRadius",false);
+  range(c.floorY,500,620,"challenge.floorY",false);
+  const spawn=level.spawn, goal=level.goal;
+  if (spawn && packIsNumber(spawn.x) && packIsNumber(spawn.y)) {
+    if (spawn.x < 40 || spawn.x > 400 || spawn.y < 160 || spawn.y + c.ballRadius >= c.floorY-30) report.errors.push("sports.spawn: launch from x 40..400, below the HUD and above the floor");
+  }
+  if (goal && checkRect(goal,"sports.goal",report,true)) {
+    if (goal.width < 2*c.ballRadius+16 || goal.width > 180 || goal.height > 24 || goal.x < 450 || goal.x+goal.width+26 > 950 || goal.y < 200 || goal.y+42 >= c.floorY) report.errors.push("sports.goal: fit a reachable-width hoop and backboard on the right side, between the HUD and floor");
+    if (goal.requires && goal.requires.length) report.errors.push("sports.goal: collection requirements are not supported in this mode");
+  }
+  ["solids","hazards","collectibles","objectives","doors","waves"].forEach(name => {
+    if (level[name] !== undefined && (!Array.isArray(level[name]) || level[name].length)) report.errors.push("sports: " + name + " must be empty; use challenge settings instead");
+  });
+  if (level.combat !== undefined) report.errors.push("sports: combat settings are not supported");
+}
+
+// Team basketball deliberately starts with three players per side and bounded stats.
+function checkBasketball(pack,report){
+  const level=pack.level;if(!level||level.mode!=="basketball")return;
+  if(level.width!==960||level.height!==640)report.errors.push("basketball: use the 960x640 court");
+  const b=level.basketball;if(!b||typeof b!=="object"){report.errors.push("basketball: missing settings");return;}
+  function number(v,min,max,label,integer){if(!packIsNumber(v)||v<min||v>max||(integer&&!Number.isInteger(v)))report.errors.push(label+": use "+min+".."+max);}
+  number(b.seconds,30,600,"basketball.seconds",true);number(b.targetScore,2,50,"basketball.targetScore",true);
+  number(b.meterCycles,0.3,2,"basketball.meterCycles",false);number(b.seed,1,4294967295,"basketball.seed",true);
+  if(!Array.isArray(b.teams)||b.teams.length!==2){report.errors.push("basketball: exactly two teams required");return;}
+  const ids=new Set();
+  b.teams.forEach((team,t)=>{
+    if(!team||!Array.isArray(team.players)||team.players.length!==3){report.errors.push("team "+t+": exactly three players required");return;}
+    team.players.forEach((p,i)=>{
+      if(!p||typeof p!=="object"){report.errors.push("team player missing");return;}
+      if(!packIsText(p.id)||!PACK_ID_PATTERN.test(p.id)||ids.has(p.id))report.errors.push("player: unique lowercase ID required");ids.add(p.id);
+      if(!packIsText(p.name)||p.name.length>16)report.errors.push("player name: use 1..16 characters");
+      ["shooting","passing","speed","defense"].forEach(stat=>number(p[stat],1,100,"team "+t+" player "+i+" "+stat,true));
+    });
+  });
+  ["solids","hazards","collectibles","objectives","doors","waves"].forEach(name=>{if(level[name]!==undefined&&(!Array.isArray(level[name])||level[name].length))report.errors.push("basketball: "+name+" must be empty");});
+  if(level.goal&&level.goal.requires&&level.goal.requires.length)report.errors.push("basketball: goal requirements are not used");
+  if(level.combat||level.challenge)report.errors.push("basketball: use basketball settings instead of another mode's settings");
+}
+// Optional shooter settings work in both movement templates; old packs need no changes.
+function checkShooter(pack,report){
+  const l=pack.level;if(!l||l.shooter===undefined)return;
+  const mode=l.mode||"platformer",s=l.shooter;
+  if(!["platformer","topdown"].includes(mode))report.errors.push("shooter: use platformer or topdown mode");
+  if(!s||typeof s!=="object"||Array.isArray(s)){report.errors.push("shooter: settings object required");return;}
+  function range(v,min,max,label,integer=false){if(!packIsNumber(v)||v<min||v>max||(integer&&!Number.isInteger(v)))report.errors.push("shooter."+label+": use "+min+".."+max+(integer?" whole numbers":""));}
+  range(l.width,64,960,"level width",true);range(l.height,64,640,"level height",true);
+  range(s.playerHealth,1,20,"playerHealth",true);range(s.damage,1,10,"damage",true);
+  range(s.bulletSpeed,80,1200,"bulletSpeed");range(s.fireInterval,0.12,3,"fireInterval");
+  range(s.bulletLifetime,0.2,5,"bulletLifetime");range(s.invulnerabilitySeconds,0.3,3,"invulnerabilitySeconds");
+  if(!Array.isArray(s.enemies)||s.enemies.length<1||s.enemies.length>16){report.errors.push("shooter.enemies: use 1..16 turrets");return;}
+  const walls=[...(Array.isArray(l.solids)?l.solids:[]),...(Array.isArray(l.doors)?l.doors:[]),...(Array.isArray(l.hazards)?l.hazards:[])];
+  const spawn=l.spawn&&{x:l.spawn.x,y:l.spawn.y,width:28,height:28},ids=new Set();
+  // Validate platformer bounds too: this first shooter version is deliberately one screen.
+  for(const [label,rect] of [["spawn",spawn],["goal",l.goal],...walls.map(w=>["wall/hazard",w]),...(Array.isArray(l.collectibles)?l.collectibles:[]).map(w=>["item",w])]){
+    if(rect&&(rect.x<0||rect.y<0||rect.x+rect.width>l.width||rect.y+rect.height>l.height))report.errors.push("shooter."+label+": outside level");
+  }
+  if(spawn&&walls.some(w=>w&&rectsOverlap(spawn,w)))report.errors.push("shooter.spawn: overlaps wall, door or hazard");
+  s.enemies.forEach((e,i)=>{
+    if(!checkRect(e,"shooter enemy "+i,report,true))return;
+    if(!packIsText(e.id)||!PACK_ID_PATTERN.test(e.id)||ids.has(e.id))report.errors.push("shooter enemy: unique lowercase ID required");ids.add(e.id);
+    range(e.width,16,64,"enemy width");range(e.height,16,64,"enemy height");
+    range(e.health,1,20,"enemy health",true);range(e.damage,1,10,"enemy damage",true);
+    range(e.bulletSpeed,60,600,"enemy bulletSpeed");range(e.fireInterval,0.6,5,"enemy fireInterval");
+    if(e.x<0||e.y<0||e.x+e.width>l.width||e.y+e.height>l.height)report.errors.push("shooter enemy: outside level");
+    if(walls.some(w=>w&&rectsOverlap(e,w))||(spawn&&rectsOverlap(e,spawn))||s.enemies.slice(0,i).some(p=>p&&rectsOverlap(e,p)))report.errors.push("shooter enemy: overlapping spawn or blocker");
+  });
+}
+// Pursuit uses bounded, editable settings and cannot be mixed with another combat module yet.
+function checkPursuit(pack,report){
+ const l=pack.level;if(!l||l.pursuit===undefined)return;const c=l.pursuit,mode=l.mode||"platformer";
+ if(!["platformer","topdown"].includes(mode))report.errors.push("pursuit: use platformer or topdown");
+ if(l.shooter||l.combat)report.errors.push("pursuit: use separately from shooter/combat in this version");
+ if(!c||typeof c!=="object"||Array.isArray(c)){report.errors.push("pursuit: settings object required");return;}
+ function range(v,min,max,label){if(!packIsNumber(v)||v<min||v>max)report.errors.push("pursuit."+label+": use "+min+".."+max);}
+ range(l.width,64,960,"width");range(l.height,64,640,"height");range(c.seconds,15,300,"seconds");
+ range(c.stunCooldown,2,15,"stunCooldown");range(c.stunSeconds,0.5,4,"stunSeconds");range(c.stunRadius,32,180,"stunRadius");range(c.memorySeconds,0.5,6,"memorySeconds");
+ if(c.stunCooldown<=c.stunSeconds)report.errors.push("pursuit: stun cooldown must exceed stun duration");
+ const solids=Array.isArray(l.solids)?l.solids:[],walls=[...solids,...(Array.isArray(l.doors)?l.doors:[]),...(Array.isArray(l.hazards)?l.hazards:[])];
+ const spawn=l.spawn&&{x:l.spawn.x,y:l.spawn.y,width:28,height:28};
+ function inside(rect,label){if(rect&&(rect.x<0||rect.y<0||rect.x+rect.width>l.width||rect.y+rect.height>l.height))report.errors.push("pursuit "+label+": outside level");}
+ inside(spawn,"spawn");inside(l.goal,"goal");walls.forEach(r=>inside(r,"blocker"));(Array.isArray(l.collectibles)?l.collectibles:[]).forEach(r=>inside(r,"item"));
+ if(spawn&&walls.some(w=>w&&rectsOverlap(spawn,w)))report.errors.push("pursuit: player starts in blocker");
+ for(const [key,max] of [["enemies",6],["hidingSpots",8]]){
+  const list=c[key];if(!Array.isArray(list)||list.length<1||list.length>max){report.errors.push("pursuit."+key+": use 1.."+max);continue;}
+  const ids=new Set();list.forEach((e,i)=>{
+   if(!checkRect(e,"pursuit "+key+" "+i,report,true))return;
+   if(!packIsText(e.id)||!PACK_ID_PATTERN.test(e.id)||ids.has(e.id))report.errors.push("pursuit: unique lowercase IDs required in "+key);ids.add(e.id);inside(e,key);
+   if(walls.some(w=>w&&rectsOverlap(e,w)))report.errors.push("pursuit "+key+": overlaps blocker");
+   if(key==="enemies"){
+    range(e.width,16,48,"enemy width");range(e.height,16,48,"enemy height");range(e.speed,20,200,"speed");range(e.noticeRadius,64,600,"noticeRadius");
+    if((spawn&&rectsOverlap(e,spawn))||list.slice(0,i).some(other=>other&&rectsOverlap(e,other)))report.errors.push("pursuit: enemy overlaps player/another enemy");
+    if(mode==="platformer"&&!solids.some(w=>w&&Math.abs(e.y+e.height-w.y)<0.1&&e.x>=w.x&&e.x+e.width<=w.x+w.width))report.errors.push("pursuit: platformer enemy must start on solid ground");
+   }else{range(e.width,32,180,"hiding width");range(e.height,32,180,"hiding height");}
+  });
+ }
+}
+// Quest references form a dependency graph. Reject cycles before a student gets stuck.
+function checkQuestInteractions(pack,report){
+ const l=pack.level;if(!l||l.interactions===undefined)return;
+ if(!["platformer","topdown"].includes(l.mode||"platformer"))report.errors.push("interactions: use platformer or topdown");
+ if(!Array.isArray(l.interactions))return;
+ if(l.interactions.length>16)report.errors.push("interactions: at most 16 per level");
+ if(!Number.isInteger(l.width)||l.width<64||l.width>960||!Number.isInteger(l.height)||l.height<64||l.height>640)report.errors.push("quest: use a one-screen level within 960x640");
+ const list=name=>Array.isArray(l[name])?l[name]:[];
+ const walls=[...list("solids"),...list("doors"),...list("hazards")];
+ for(const [i,a] of l.interactions.entries()){
+  if(!a||typeof a!=="object")continue;
+  if(!["switch","clue","npc"].includes(a.type))report.errors.push("interaction "+i+": type must be switch, clue or npc");
+  if(!packIsText(a.label)||a.label.length>24)report.errors.push("interaction label: use 1..24 characters");
+  for(const name of ["text","lockedText","doneText"])if(!packIsText(a[name])||a[name].length>220||/\S{61}/.test(a[name]))report.errors.push("interaction "+name+": use 1..220 characters and words up to 60 characters");
+  if(!packIsNumber(a.width)||a.width<16||a.width>64||!packIsNumber(a.height)||a.height<16||a.height>80)report.errors.push("interaction: width 16..64, height 16..80");
+  if(walls.some(w=>w&&rectsOverlap(a,w)))report.errors.push("interaction: overlaps wall, door or hazard");
+  if(l.interactions.slice(0,i).some(b=>b&&rectsOverlap(a,b)))report.errors.push("interaction: overlaps another interaction");
+ }
+ const spawn=l.spawn&&{x:l.spawn.x,y:l.spawn.y,width:28,height:28};
+ for(const rect of [spawn,l.goal,...walls,...list("collectibles"),...l.interactions])if(rect&&(rect.x<0||rect.y<0||rect.x+rect.width>l.width||rect.y+rect.height>l.height))report.errors.push("quest: rectangle outside level");
+ if(spawn&&walls.some(w=>w&&rectsOverlap(spawn,w)))report.errors.push("quest: player starts in a blocker");
+ const graph=new Map(),array=v=>Array.isArray(v)?v:[];
+ for(const item of list("collectibles"))if(item)graph.set("item:"+item.id,item.revealBy?["action:"+item.revealBy]:[]);
+ for(const a of l.interactions)if(a)graph.set("action:"+a.id,[...array(a.requires).map(id=>"objective:"+id),...array(a.needs).map(id=>"item:"+id)]);
+ for(const o of list("objectives"))if(o)graph.set("objective:"+o.id,[...array(o.collect).map(id=>"item:"+id),...array(o.interact).map(id=>"action:"+id)]);
+ const visiting=new Set(),visited=new Set();
+ function cycle(node){if(visiting.has(node))return true;if(visited.has(node))return false;visiting.add(node);for(const next of graph.get(node)||[])if(cycle(next))return true;visiting.delete(node);visited.add(node);return false;}
+ if([...graph.keys()].some(cycle))report.errors.push("quest: circular requirements/reveal chain would block progress");
+}
+// Soccer is a one-screen shooting challenge; keep configuration bounded and readable.
+function checkSoccer(pack,report){
+ const l=pack.level;if(!l||l.mode!=="soccer")return;
+ if(l.width!==960||l.height!==640)report.errors.push("soccer: use a 960x640 pitch");
+ const c=l.soccer;if(!c||typeof c!=="object"||Array.isArray(c)){report.errors.push("soccer: settings object required");return;}
+ function range(v,min,max,label,integer=false){if(!packIsNumber(v)||v<min||v>max||(integer&&!Number.isInteger(v)))report.errors.push("soccer."+label+": use "+min+".."+max);}
+ range(c.seconds,15,180,"seconds");range(c.targetScore,1,20,"targetScore",true);
+ range(c.playerSpeed,100,260,"playerSpeed");range(c.startPower,320,720,"startPower");range(c.drag,40,240,"drag");
+ range(c.ballRadius,6,12,"ballRadius");range(c.keeperSpeed,30,180,"keeperSpeed");range(c.keeperHeight,24,90,"keeperHeight");range(c.shootingLine,500,700,"shootingLine");
+ if(l.spawn){range(l.spawn.x,60,c.shootingLine,"spawn.x");range(l.spawn.y,160,570,"spawn.y");}
+ if(l.goal&&checkRect(l.goal,"soccer.goal",report,true)){
+  if(l.goal.x!==880||l.goal.width!==8||l.goal.y<180||l.goal.height<100||l.goal.height>260||l.goal.y+l.goal.height>550)report.errors.push("soccer.goal: x 880, width 8, height 100..260, between y 180 and 550");
+  if(c.keeperHeight>l.goal.height-32)report.errors.push("soccer: leave space beside the keeper");
+  if(l.goal.requires&&l.goal.requires.length)report.errors.push("soccer: goal requirements are not used");
+ }
+ for(const name of ["solids","hazards","collectibles","objectives","doors","waves","interactions"]){if(l[name]!==undefined&&(!Array.isArray(l[name])||l[name].length))report.errors.push("soccer: "+name+" must be empty");}
+ for(const name of ["combat","shooter","pursuit","basketball","challenge"])if(l[name]!==undefined)report.errors.push("soccer: use soccer settings, not "+name);
+}
+
+// Football uses a fixed field. Validate tunable difficulty and reject unsupported systems.
+function checkFootball(pack,report){
+ const l=pack.level;if(!l||l.mode!=="football")return;
+ if(l.width!==960||l.height!==640)report.errors.push("football: use a 960x640 field");
+ const c=l.football;if(!c||typeof c!=="object"||Array.isArray(c)){report.errors.push("football: settings object required");return;}
+ function range(v,min,max,label,integer=false){if(!packIsNumber(v)||v<min||v>max||(integer&&!Number.isInteger(v)))report.errors.push("football."+label+": use "+min+".."+max);}
+ range(c.seconds,15,180,"seconds");range(c.targetTouchdowns,1,5,"targetTouchdowns",true);range(c.attempts,1,10,"attempts",true);
+ if(c.targetTouchdowns>c.attempts)report.errors.push("football: target cannot exceed attempts");
+ range(c.playerSpeed,120,220,"playerSpeed");range(c.sprintSpeed,c.playerSpeed,300,"sprintSpeed");range(c.sprintSeconds,0.5,5,"sprintSeconds");range(c.recovery,0.1,2,"recovery");range(c.defenderSpeed,40,140,"defenderSpeed");range(c.noticeRadius,60,250,"noticeRadius");
+ if(c.defenderSpeed>=c.playerSpeed)report.errors.push("football: defenders must be slower than the runner");
+ if(l.spawn){range(l.spawn.x,90,180,"spawn.x");range(l.spawn.y,180,550,"spawn.y");}
+ if(l.goal&&(l.goal.x!==810||l.goal.y!==150||l.goal.width!==90||l.goal.height!==430||l.goal.requires?.length))report.errors.push("football.goal: use x810 y150 width90 height430 without requirements");
+ const solids=Array.isArray(l.solids)?l.solids:[];
+ if(solids.length>6)report.errors.push("football: use at most six training pads");
+ for(const b of solids){if(b&&checkRect(b,"football.pad",report,true)&&(b.x<260||b.x+b.width>760||b.y<180||b.y+b.height>550||b.width>100||b.height>150))report.errors.push("football: pads must fit x260..760, y180..550, max 100x150");}
+ if(!Array.isArray(c.defenders)||c.defenders.length<1||c.defenders.length>4)report.errors.push("football: use one to four defenders");
+ else for(const d of c.defenders){
+  if(!d||typeof d!=="object"){report.errors.push("football: defender object required");continue;}
+  range(d.x,300,740,"defender.x");range(d.y,180,550,"defender.y");
+  if(d.direction!==undefined&&d.direction!==-1&&d.direction!==1)report.errors.push("football: direction must be -1 or 1");
+  if(solids.some(b=>b&&d.x+14>b.x&&d.x-14<b.x+b.width&&d.y+14>b.y&&d.y-14<b.y+b.height))report.errors.push("football: defender starts inside a pad");
+ }
+ for(const name of ["hazards","collectibles","objectives","doors","waves","interactions"])if(l[name]!==undefined&&(!Array.isArray(l[name])||l[name].length))report.errors.push("football: "+name+" must be empty");
+ for(const name of ["combat","shooter","pursuit","soccer","basketball","challenge"])if(l[name]!==undefined)report.errors.push("football: use football settings, not "+name);
+}
+
+// Ranch is an open paddock. Reject settings this mode cannot honor rather than ignore them.
+function checkRanch(pack,report){
+ const l=pack.level;if(!l)return;
+ if(l.mode!=="ranch"){if(l.ranch!==undefined)report.errors.push("ranch settings require ranch mode");return;}
+ if(l.width!==960||l.height!==640)report.errors.push("ranch: use a 960x640 canvas");
+ const c=l.ranch;if(!c||typeof c!=="object"||Array.isArray(c)){report.errors.push("ranch: settings object required");return;}
+ function range(v,min,max,label,integer=false){if(!packIsNumber(v)||v<min||v>max||(integer&&!Number.isInteger(v)))report.errors.push("ranch."+label+": use "+min+".."+max);}
+ range(c.seconds,15,180,"seconds");range(c.targetCatches,1,6,"targetCatches",true);range(c.playerSpeed,140,260,"playerSpeed");range(c.calfSpeed,40,130,"calfSpeed");
+ range(c.catchRange,40,100,"catchRange");range(c.catchCooldown,0.3,2,"catchCooldown");range(c.fleeRadius,80,220,"fleeRadius");
+ if(c.calfSpeed>=c.playerSpeed)report.errors.push("ranch: player must be faster than calves");
+ if(c.fleeRadius<c.catchRange)report.errors.push("ranch: fleeRadius must be at least catchRange");
+ if(l.spawn){range(l.spawn.x,74,886,"spawn.x");range(l.spawn.y,164,566,"spawn.y");}
+ if(l.goal&&(l.goal.x!==760||l.goal.y!==40||l.goal.width!==180||l.goal.height!==80||l.goal.requires?.length))report.errors.push("ranch.goal: safe pen uses x760 y40 width180 height80, no requirements");
+ if(!Array.isArray(c.calves)||c.calves.length<1||c.calves.length>6)report.errors.push("ranch: one to six calves required");
+ else{
+  if(c.targetCatches>c.calves.length)report.errors.push("ranch: target cannot exceed calf count");
+  const ids=new Set();
+  for(const calf of c.calves){
+   if(!calf||typeof calf!=="object"){report.errors.push("ranch: calf object required");continue;}
+   if(!packIsText(calf.id)||!PACK_ID_PATTERN.test(calf.id)||ids.has(calf.id))report.errors.push("ranch: calf IDs must be unique lowercase IDs");ids.add(calf.id);
+   range(calf.x,74,886,"calf.x");range(calf.y,164,566,"calf.y");range(calf.heading,0,360,"calf.heading");
+   if(l.spawn&&Math.hypot(calf.x-l.spawn.x,calf.y-l.spawn.y)<=c.catchRange)report.errors.push("ranch: start calves outside the player's catch range");
+  }
+ }
+ for(const name of ["solids","hazards","collectibles","objectives","doors","waves","interactions"])if(l[name]!==undefined&&(!Array.isArray(l[name])||l[name].length))report.errors.push("ranch: "+name+" must be empty");
+ for(const name of ["combat","shooter","pursuit","soccer","football","basketball","challenge"])if(l[name]!==undefined)report.errors.push("ranch: unsupported settings "+name);
+}
+
+</script>
+<script>
+// TEACHER-OWNED: temporary progress for ONE attempt at a level.
+// Students edit collectibles, objectives and doors in their own pack.js.
+// Never change the pack itself during play: restart must restore every item.
+function createLevelProgress() {
+  return { collected: new Set(), interacted: new Set(), dialogue: null };
+}
+
+function collectLevelItems(level, progress, player) {
+  for (const item of level.collectibles || []) {
+    if (!progress.collected.has(item.id) && (!item.revealBy || progress.interacted.has(item.revealBy)) && isColliding(player, item)) {
+      progress.collected.add(item.id);
+    }
+  }
+}
+
+// Objectives can require collected items, completed interactions, or both.
+// Every listed ID is required; absent lists preserve older collection-only packs.
+// IDs are local to this level, so two students can both name an item "key".
+function isObjectiveComplete(level, progress, objectiveId) {
+  const objective = (level.objectives || []).find(function (item) {
+    return item.id === objectiveId;
+  });
+  return !!objective && (objective.collect || []).every(id => progress.collected.has(id)) &&
+    (objective.interact || []).every(id => progress.interacted.has(id));
+}
+
+// Doors and the goal use the same rule. No requirements means always open.
+// This default preserves packs created before objectives were introduced.
+function areLevelRequirementsMet(level, progress, requirements) {
+  return (requirements || []).every(function (id) {
+    return isObjectiveComplete(level, progress, id);
+  });
+}
+
+function getClosedLevelDoors(level, progress) {
+  return (level.doors || []).filter(function (door) {
+    return !areLevelRequirementsMet(level, progress, door.requires);
+  });
+}
+
+// The HUD names the task and shows progress, so color is not the only clue.
+function drawLevelObjectives(ctx, level, progress) {
+  ctx.save();
+  ctx.font = "16px monospace";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  (level.objectives || []).forEach(function (objective, index) {
+    const found = (objective.collect || []).filter(id => progress.collected.has(id)).length +
+      (objective.interact || []).filter(id => progress.interacted.has(id)).length;
+    const total = (objective.collect || []).length + (objective.interact || []).length;
+    const message = objective.label + ": " + found + "/" + total;
+    // Keep tasks on the right so F1's teacher debug panel cannot cover them.
+    const width = Math.min(610, ctx.measureText(message).width + 16);
+    const left = canvas.width - width - 12;
+    ctx.fillStyle = "#101827";
+    ctx.fillRect(left, 12 + index * 26, width, 24);
+    ctx.fillStyle = "white";
+    ctx.fillText(message, left + 8, 16 + index * 26, width - 16);
+  });
+  ctx.restore();
+}
+
+</script>
+<script>
+// PUZZLE / QUEST interactions share the existing objective and door system.
+// Students author level.interactions and objectives. Only progress changes during play.
+function nearestQuestInteraction(level,progress,player){
+  const walls=(level.solids||[]).concat(getClosedLevelDoors(level,progress));
+  let target=null,distance=Infinity;
+  for(const item of level.interactions||[]){
+    const d=Math.hypot(player.x+player.width/2-item.x-item.width/2,player.y+player.height/2-item.y-item.height/2);
+    // The closest visible interaction wins; authored order breaks ties predictably.
+    if(d<=56&&d<distance&&!arenaWallBetween(player,item,walls)){target=item;distance=d;}
+  }
+  return target;
+}
+function activateQuestInteraction(level,progress,item){
+  let text;
+  if(progress.interacted.has(item.id))text=item.doneText;
+  else if(!areLevelRequirementsMet(level,progress,item.requires)||!(item.needs||[]).every(id=>progress.collected.has(id)))text=item.lockedText;
+  else{
+    // Switches latch ON, clues stay read, deliveries stay complete. No soft-locking toggle.
+    // Delivery uses the collection journal, not a consumable inventory: items remain recorded.
+    progress.interacted.add(item.id);text=item.text;
+  }
+  progress.dialogue={title:item.label,text};
+}
+function drawQuestInteractions(ctx,level,progress,player){
+  ctx.save();ctx.font="13px monospace";ctx.textAlign="left";ctx.textBaseline="bottom";
+  for(const item of level.interactions||[]){
+    const done=progress.interacted.has(item.id);
+    ctx.fillStyle=done?"#4ade80":item.type==="npc"?"#60a5fa":item.type==="clue"?"#facc15":"#fb923c";
+    ctx.fillRect(item.x,item.y,item.width,item.height);ctx.fillStyle="white";
+    ctx.fillText(item.label+(done?" (done)":""),item.x,item.y-5);
+  }
+  const nearby=nearestQuestInteraction(level,progress,player);
+  if(nearby&&!progress.dialogue){ctx.fillStyle="#101827";ctx.fillRect(180,540,600,32);ctx.fillStyle="white";ctx.textAlign="center";ctx.fillText("E: "+nearby.label,480,563);}
+  if(progress.dialogue){
+    ctx.fillStyle="rgba(10,18,33,0.98)";ctx.fillRect(48,390,864,190);ctx.strokeStyle="#94a3b8";ctx.strokeRect(48,390,864,190);
+    ctx.fillStyle="white";ctx.textAlign="left";ctx.textBaseline="top";ctx.font="18px monospace";ctx.fillText(progress.dialogue.title,68,406);
+    ctx.font="16px monospace";
+    // Wrap by actual measured width; bounded text prevents the panel spilling off screen.
+    const words=progress.dialogue.text.split(/\s+/);let line="",y=438;
+    for(const word of words){const next=line?line+" "+word:word;if(ctx.measureText(next).width>820&&line){ctx.fillText(line,68,y);y+=21;line=word;}else line=next;}
+    if(line)ctx.fillText(line,68,y);
+    ctx.fillStyle="#93c5fd";ctx.fillText("E / Enter: close | R: restart | Esc: home",68,550);
+  }
+  ctx.restore();
+}
+
+</script>
+<script>
+// SHARED MELEE: arena, platformer and top-down adventure use this combat module.
+// Movement mode still controls the player. Space stays jump in platformers; J strikes.
+// Students edit level.combat and level.waves in pack.js, not this runtime state.
+function createArenaCombat(level) {
+  const state = {
+    health: level.combat.playerHealth, wave: 0, enemies: [],
+    cooldown: 0, attackTime: 0, attackBox: null, invulnerable: 0.8,
+    waveDelay: 0, defeated: false, cleared: false
+  };
+  spawnArenaWave(level, state);
+  return state;
+}
+
+function spawnArenaWave(level, state) {
+  // Copy every enemy so damage never changes the student's original design.
+  state.enemies = level.waves[state.wave].enemies.map(enemy => Object.assign({}, enemy, {hitStun:0}));
+  state.invulnerable = Math.max(state.invulnerable, 0.8);
+}
+
+// The attack reaches in the direction the player last walked. It is not a projectile.
+function arenaAttackBox(player, reach) {
+  const cx = player.x + player.width / 2, cy = player.y + player.height / 2;
+  if (player.facing === "left") return {x:cx-reach,y:player.y-6,width:reach,height:player.height+12};
+  if (player.facing === "right") return {x:cx,y:player.y-6,width:reach,height:player.height+12};
+  if (player.facing === "up") return {x:player.x-6,y:cy-reach,width:player.width+12,height:reach};
+  return {x:player.x-6,y:cy,width:player.width+12,height:reach};
+}
+
+// A segment/rectangle test prevents melee damage through walls and locked doors.
+function arenaWallBetween(player, enemy, walls) {
+  const x = player.x + player.width / 2, y = player.y + player.height / 2;
+  const dx = enemy.x + enemy.width / 2 - x, dy = enemy.y + enemy.height / 2 - y;
+  return walls.some(wall => {
+    let start = 0, end = 1;
+    for (const [origin, delta, low, high] of [[x,dx,wall.x,wall.x+wall.width],[y,dy,wall.y,wall.y+wall.height]]) {
+      if (delta === 0) { if (origin < low || origin > high) return false; }
+      else {
+        const a = (low-origin)/delta, b = (high-origin)/delta;
+        start = Math.max(start, Math.min(a,b)); end = Math.min(end, Math.max(a,b));
+        if (start > end) return false;
+      }
+    }
+    return true;
+  });
+}
+
+function updateArenaCombat(level, state, player, walls, seconds, attackPressed) {
+  if (state.defeated || state.cleared) return;
+  state.cooldown = Math.max(0, state.cooldown-seconds);
+  state.attackTime = Math.max(0, state.attackTime-seconds);
+  state.invulnerable = Math.max(0, state.invulnerable-seconds);
+  if (state.waveDelay > 0) {
+    state.waveDelay = Math.max(0, state.waveDelay-seconds);
+    if (state.waveDelay === 0) { state.wave += 1; spawnArenaWave(level,state); }
+    return;
+  }
+  // One press produces one strike. Holding the key never causes automatic damage.
+  if (attackPressed && state.cooldown === 0) {
+    state.cooldown = level.combat.attackCooldown;
+    state.attackTime = 0.12;
+    state.attackBox = arenaAttackBox(player, level.combat.attackReach);
+    for (const enemy of state.enemies) {
+      if (isColliding(state.attackBox,enemy) && !arenaWallBetween(player,enemy,walls)) {
+        enemy.health -= level.combat.attackDamage;
+        // A successful hit briefly interrupts contact damage, giving the player room to retreat.
+        enemy.hitStun = 0.18;
+      }
+    }
+    state.enemies = state.enemies.filter(enemy => enemy.health > 0);
+  }
+  // Enemies follow the player on one axis, sliding against walls. This is not maze AI.
+  for (const enemy of state.enemies) {
+    if(enemy.hitStun>0){enemy.hitStun=Math.max(0,enemy.hitStun-seconds);continue;}
+    const dx = player.x+player.width/2 - (enemy.x+enemy.width/2);
+    const dy = player.y+player.height/2 - (enemy.y+enemy.height/2);
+    const step = enemy.speed * seconds;
+    if((level.mode || "platformer") === "platformer"){
+      // Ground guards walk horizontally, never fly toward a jumping player.
+      // Check the leading foot so guards stop at ledges instead of floating over gaps.
+      const move=Math.sign(dx)*Math.min(step,Math.abs(dx));
+      const foot={x:move>=0?enemy.x+move+enemy.width-2:enemy.x+move,y:enemy.y+enemy.height,width:2,height:2};
+      if(walls.some(w=>isColliding(foot,w)))moveWithCollision(enemy,move,0,walls);
+    }else if (Math.abs(dx) > Math.abs(dy)) moveWithCollision(enemy,Math.sign(dx)*Math.min(step,Math.abs(dx)),0,walls);
+    else moveWithCollision(enemy,0,Math.sign(dy)*Math.min(step,Math.abs(dy)),walls);
+    enemy.x = Math.max(0,Math.min(level.width-enemy.width,enemy.x));
+    enemy.y = Math.max(0,Math.min(level.height-enemy.height,enemy.y));
+    // A grace period prevents several overlapping enemies from draining health instantly.
+    if (state.invulnerable === 0 && isColliding(player,enemy)) {
+      state.health = Math.max(0,state.health-enemy.damage);
+      state.invulnerable = level.combat.invulnerabilitySeconds;
+      if (state.health === 0) { state.defeated = true; return; }
+    }
+  }
+  if (state.enemies.length === 0) {
+    if (state.wave + 1 === level.waves.length) state.cleared = true;
+    else state.waveDelay = 0.8;
+  }
+}
+
+function drawArenaCombat(ctx, level, state, player) {
+  ctx.save();
+  ctx.font = "14px monospace"; ctx.textAlign = "left"; ctx.textBaseline = "bottom";
+  for (const enemy of state.enemies) {
+    ctx.fillStyle = enemy.hitStun>0 ? "#fde047" : "#e87956";ctx.fillRect(enemy.x,enemy.y,enemy.width,enemy.height);
+    ctx.fillStyle = "white";ctx.fillText("HP " + enemy.health,enemy.x,enemy.y-4);
+  }
+  if (state.attackTime > 0 && state.attackBox && !state.cleared && !state.defeated) {
+    const box = state.attackBox;ctx.fillStyle = "rgba(253,224,71,0.55)";
+    ctx.fillRect(box.x,box.y,box.width,box.height);
+  }
+  if (state.invulnerable > 0 && !state.defeated) {
+    ctx.strokeStyle = "white";ctx.strokeRect(player.x-2,player.y-2,player.width+4,player.height+4);
+  }
+  // Keep the combat HUD below any collection objectives and clear of F1 debug text.
+  const y = 16 + (level.objectives || []).length*26;
+  const message = "HP " + state.health + "/" + level.combat.playerHealth + " | Wave " + (state.wave+1) + "/" + level.waves.length + " | Enemies " + state.enemies.length;
+  ctx.fillStyle = "#101827";ctx.fillRect(420,y,528,54);
+  ctx.fillStyle = "white";ctx.textBaseline = "top";ctx.fillText(message,430,y+5);
+  ctx.fillText(state.defeated ? "Defeated: R to retry, Esc for home" : state.cleared ? "Enemies cleared! Finish tasks and reach exit." : state.waveDelay > 0 ? "Next wave incoming..." : ((level.mode || "platformer") === "platformer" ? "Tap J: strike | Space: jump | Face your target." : "Face a rival; tap J or Space to strike."),430,y+29);
+  ctx.restore();
+}
+
+</script>
+<script>
+// SHARED SHOOTER: opt in with level.shooter in a platformer or top-down pack.
+// The pack is a design. This copied state is one attempt, so R never edits the design.
+function createShooter(level) {
+  return {health:level.shooter.playerHealth, cooldown:0, invulnerable:0.8,
+    bullets:[], enemies:level.shooter.enemies.map(e=>Object.assign({},e,{cooldown:e.fireInterval})),
+    defeated:false, cleared:false, aim:{x:1,y:0}};
+}
+function shooterCenter(rect) {return {x:rect.x+rect.width/2,y:rect.y+rect.height/2};}
+
+// Swept collision: find WHEN a moving bullet first touches a rectangle (0..1).
+// Expanding the rectangle by the bullet radius prevents fast shots skipping thin walls.
+function shooterHitTime(x,y,dx,dy,rect,radius) {
+  let first=0,last=1;
+  for(const [origin,delta,low,high] of [[x,dx,rect.x-radius,rect.x+rect.width+radius],[y,dy,rect.y-radius,rect.y+rect.height+radius]]) {
+    if(delta===0){if(origin<low||origin>high)return null;}
+    else {const a=(low-origin)/delta,b=(high-origin)/delta;
+      first=Math.max(first,Math.min(a,b));last=Math.min(last,Math.max(a,b));
+      if(first>last)return null;
+    }
+  }
+  return first;
+}
+function shooterDirection(player,controls) {
+  let x=(controls.aimRight?1:0)-(controls.aimLeft?1:0);
+  let y=(controls.aimDown?1:0)-(controls.aimUp?1:0);
+  if(!x&&!y){const facing={left:[-1,0],right:[1,0],up:[0,-1],down:[0,1]}[player.facing];[x,y]=facing||[1,0];}
+  const length=Math.hypot(x,y);return {x:x/length,y:y/length};
+}
+function shooterAddBullet(state,from,direction,speed,damage,lifetime,team) {
+  // A hard limit plus lifetime/bounds cleanup prevents an endless buildup of objects.
+  if(state.bullets.length>=128)return;
+  state.bullets.push({x:from.x,y:from.y,vx:direction.x*speed,vy:direction.y*speed,
+    radius:4,damage,life:lifetime,team});
+}
+function shooterDamage(level,state,damage) {
+  if(state.invulnerable>0)return;
+  state.health=Math.max(0,state.health-damage);state.invulnerable=level.shooter.invulnerabilitySeconds;
+  if(state.health===0){state.defeated=true;state.bullets=[];}
+}
+function updateShooter(level,state,player,walls,seconds,controls) {
+  if(state.defeated||state.cleared)return;
+  const config=level.shooter;
+  state.cooldown=Math.max(0,state.cooldown-seconds);
+  state.invulnerable=Math.max(0,state.invulnerable-seconds);
+  state.aim=shooterDirection(player,controls);
+  const center=shooterCenter(player);
+  // Hold F to fire at a controlled rate. Space remains jump in the platformer.
+  if(controls.fire&&state.cooldown===0){
+    shooterAddBullet(state,center,state.aim,config.bulletSpeed,config.damage,config.bulletLifetime,"player");
+    state.cooldown=config.fireInterval;
+  }
+  for(const enemy of state.enemies){
+    enemy.cooldown=Math.max(0,enemy.cooldown-seconds);
+    const from=shooterCenter(enemy),dx=center.x-from.x,dy=center.y-from.y,length=Math.hypot(dx,dy);
+    // Turrets aim at the current position ONCE per shot; bullets never home afterward.
+    // Walls and closed doors block sight. The yellow outline warns of an imminent shot.
+    if(enemy.cooldown===0&&length>0&&!walls.some(w=>shooterHitTime(from.x,from.y,dx,dy,w,4)!==null)){
+      shooterAddBullet(state,from,{x:dx/length,y:dy/length},enemy.bulletSpeed,enemy.damage,config.bulletLifetime,"enemy");
+      enemy.cooldown=enemy.fireInterval;
+    }
+    if(isColliding(player,enemy))shooterDamage(level,state,enemy.damage);
+    if(state.defeated)return;
+  }
+  const remaining=[];
+  for(const bullet of state.bullets){
+    const step=Math.min(seconds,bullet.life),dx=bullet.vx*step,dy=bullet.vy*step;
+    let nearest=Infinity,target=null;
+    // Check walls first so a tie cannot damage someone through cover.
+    for(const wall of walls){const t=shooterHitTime(bullet.x,bullet.y,dx,dy,wall,bullet.radius);if(t!==null&&t<nearest){nearest=t;target="wall";}}
+    const targets=bullet.team==="player"?state.enemies.filter(e=>e.health>0):[player];
+    for(const actor of targets){const t=shooterHitTime(bullet.x,bullet.y,dx,dy,actor,bullet.radius);if(t!==null&&t<nearest){nearest=t;target=actor;}}
+    if(target){
+      if(target!=="wall"){
+        if(bullet.team==="player")target.health-=bullet.damage;
+        else shooterDamage(level,state,bullet.damage);
+      }
+      if(state.defeated)return;
+      continue; // One projectile hits at most one actor. No unintended piercing.
+    }
+    bullet.x+=dx;bullet.y+=dy;bullet.life-=seconds;
+    if(bullet.life>0&&bullet.x>=0&&bullet.x<=level.width&&bullet.y>=0&&bullet.y<=level.height)remaining.push(bullet);
+  }
+  state.bullets=remaining;state.enemies=state.enemies.filter(e=>e.health>0);
+  if(state.enemies.length===0){state.cleared=true;state.bullets=[];}
+}
+function drawShooter(ctx,level,state,player){
+  ctx.save();ctx.font="14px monospace";ctx.textAlign="left";ctx.textBaseline="top";
+  for(const e of state.enemies){
+    ctx.fillStyle="#e87956";ctx.fillRect(e.x,e.y,e.width,e.height);
+    if(e.cooldown<0.35){ctx.strokeStyle="#fde047";ctx.lineWidth=3;ctx.strokeRect(e.x-2,e.y-2,e.width+4,e.height+4);}
+    ctx.fillStyle="white";ctx.fillText("HP "+e.health,e.x,e.y-20);
+  }
+  for(const b of state.bullets){ctx.fillStyle=b.team==="player"?"#67e8f9":"#fb7185";ctx.beginPath();ctx.arc(b.x,b.y,b.radius,0,Math.PI*2);ctx.fill();}
+  if(!state.defeated){const c=shooterCenter(player);ctx.strokeStyle="#67e8f9";ctx.beginPath();ctx.moveTo(c.x,c.y);ctx.lineTo(c.x+state.aim.x*26,c.y+state.aim.y*26);ctx.stroke();}
+  if(state.invulnerable>0&&!state.defeated){ctx.strokeStyle="white";ctx.strokeRect(player.x-2,player.y-2,player.width+4,player.height+4);}
+  ctx.fillStyle="#101827";ctx.fillRect(360,12,590,76);ctx.fillStyle="white";
+  ctx.fillText("HP "+state.health+"/"+level.shooter.playerHealth+" | Targets "+state.enemies.length,370,20);
+  ctx.fillText("Hold F: fire | I J K L: aim | Move: WASD/arrows",370,43);
+  ctx.fillText(state.defeated?"Defeated: R to retry, Esc for home":state.cleared?"Targets cleared! Finish tasks and reach gold exit.":"Cyan = your shots. Pink = enemy shots. Use cover.",370,65);
+  ctx.restore();
+}
+
+</script>
+<script>
+// CHASE / SURVIVAL: optional level.pursuit module for platformer or top-down movement.
+// Copy design data into attempt state: R resets enemies, the clock, and stun cooldown.
+function createPursuit(level){return {enemies:level.pursuit.enemies.map(e=>Object.assign({},e,{memory:0,target:null,stunned:0})),remaining:level.pursuit.seconds,cooldown:0,flash:0,grace:1,hiding:false,defeated:false,reason:""};}
+function pursuitHidden(level,player,hold){
+  // Hide only when the WHOLE player is inside a marked refuge. No midair hiding.
+  if(!hold||((level.mode||"platformer")==="platformer"&&!player.onGround))return false;
+  return level.pursuit.hidingSpots.some(z=>player.x>=z.x&&player.y>=z.y&&player.x+player.width<=z.x+z.width&&player.y+player.height<=z.y+z.height);
+}
+function pursuitDistance(a,b){return Math.hypot(a.x+a.width/2-b.x-b.width/2,a.y+a.height/2-b.y-b.height/2);}
+function updatePursuit(level,state,player,walls,seconds,controls){
+  if(state.defeated)return;
+  const c=level.pursuit;
+  state.remaining=Math.max(0,state.remaining-seconds);state.cooldown=Math.max(0,state.cooldown-seconds);
+  state.flash=Math.max(0,state.flash-seconds);state.grace=Math.max(0,state.grace-seconds);
+  state.hiding=pursuitHidden(level,player,controls.hide);
+  if(controls.stun&&state.cooldown===0){
+    // You can flash from a refuge before releasing H, avoiding a frame-perfect escape.
+    // A flash cannot pass through cover. Pressing Q spends the cooldown even on a miss.
+    state.cooldown=c.stunCooldown;state.flash=0.25;
+    for(const e of state.enemies)if(pursuitDistance(player,e)<=c.stunRadius&&!arenaWallBetween(player,e,walls)){
+      e.stunned=c.stunSeconds;e.memory=0;e.target=null;
+    }
+  }
+  for(const e of state.enemies){
+    if(e.stunned>0){e.stunned=Math.max(0,e.stunned-seconds);continue;}
+    const sees=!state.hiding&&pursuitDistance(player,e)<=e.noticeRadius&&!arenaWallBetween(player,e,walls);
+    if(sees){e.target={x:player.x,y:player.y};e.memory=c.memorySeconds;}
+    else e.memory=Math.max(0,e.memory-seconds);
+    if(e.memory===0)e.target=null;
+    if(e.target){
+      const dx=e.target.x-e.x,dy=e.target.y-e.y,step=e.speed*seconds;
+      if((level.mode||"platformer")==="platformer"){
+        // Ground pursuers stop at walls and ledges; they do not fly or auto-jump gaps.
+        const move=Math.sign(dx)*Math.min(step,Math.abs(dx));
+        const probe={x:e.x+move,y:e.y,width:e.width,height:e.height};
+        // Check the leading foot, not just any overlap beneath the body.
+        const foot={x:move>=0?probe.x+probe.width-2:probe.x,y:probe.y+probe.height,width:2,height:2};
+        if(walls.some(w=>isColliding(foot,w)))moveWithCollision(e,move,0,walls);
+      }else{
+        // Simple line-of-sight pursuit with wall sliding, not full maze pathfinding.
+        const distance=Math.hypot(dx,dy);
+        if(distance){const travel=Math.min(step,distance);moveWithCollision(e,dx/distance*travel,0,walls);moveWithCollision(e,0,dy/distance*travel,walls);}
+      }
+      e.x=Math.max(0,Math.min(level.width-e.width,e.x));e.y=Math.max(0,Math.min(level.height-e.height,e.y));
+    }
+    // Hiding keeps the player safe while holding H, even if a pursuer reaches the refuge.
+    if(!state.hiding&&state.grace===0&&isColliding(player,e)){state.defeated=true;state.reason="Caught! R to retry, Esc for home.";return;}
+  }
+  if(state.remaining===0){state.defeated=true;state.reason="Time expired. R to retry, Esc for home.";}
+}
+function drawPursuit(ctx,level,state,player){
+  ctx.save();ctx.textAlign="left";ctx.textBaseline="top";ctx.font="14px monospace";
+  for(const z of level.pursuit.hidingSpots){ctx.fillStyle="rgba(52,211,153,0.2)";ctx.fillRect(z.x,z.y,z.width,z.height);ctx.strokeStyle="#34d399";ctx.strokeRect(z.x,z.y,z.width,z.height);ctx.fillStyle="white";ctx.fillText("Hold H: hide",z.x,z.y-20);}
+  for(const e of state.enemies){ctx.fillStyle=e.stunned>0?"#a78bfa":e.target?"#fb7185":"#f59e0b";ctx.fillRect(e.x,e.y,e.width,e.height);ctx.fillStyle="white";ctx.fillText(e.stunned>0?"Stunned":e.target?"Chasing":"Watching",e.x,e.y-20);}
+  if(state.flash>0){ctx.strokeStyle="#fef08a";ctx.lineWidth=3;ctx.beginPath();ctx.arc(player.x+player.width/2,player.y+player.height/2,level.pursuit.stunRadius,0,Math.PI*2);ctx.stroke();}
+  ctx.fillStyle="#101827";ctx.fillRect(360,12,590,76);ctx.fillStyle="white";
+  ctx.fillText("Escape: "+Math.ceil(state.remaining)+"s | Flash: "+(state.cooldown>0?Math.ceil(state.cooldown)+"s":"READY"),370,20);
+  ctx.fillText("Q: stun nearby threat | Hold H inside green refuge",370,43);
+  ctx.fillText(state.defeated?state.reason:state.hiding?"Hidden. The escape clock keeps running!":"Collect the key, avoid pursuit, reach the gold exit.",370,65);ctx.restore();
+}
+
+</script>
+<script>
+// TEACHER-OWNED: a one-player shooting challenge, not a full team-sports simulator.
+// Students customize the hoop and challenge settings in pack.js.
+function createSkillChallenge(level) {
+  return {
+    angle: level.challenge.startAngle, power: level.challenge.startPower,
+    score: 0, shots: 0, remaining: level.challenge.timeLimit,
+    started: false, won: false, expired: false, ball: null,
+    message: "Set your angle and power, then tap Space."
+  };
+}
+
+function sportsBackboard(level) {
+  // The board is derived from the hoop, so students only move one target rectangle.
+  return {x:level.goal.x+level.goal.width+14,y:level.goal.y-80,width:12,height:100};
+}
+
+function launchSportsBall(level, state) {
+  const radians = state.angle * Math.PI / 180;
+  state.ball = {x:level.spawn.x,y:level.spawn.y,
+    vx:Math.cos(radians)*state.power,vy:-Math.sin(radians)*state.power};
+  state.started = true;state.shots += 1;state.message = "Shot in flight...";
+}
+
+function updateSkillChallenge(level, state, seconds, controls) {
+  if (state.won || state.expired) return;
+  const config = level.challenge;
+  if (!state.ball) {
+    // One key press makes one adjustment. Settings stay fixed while a ball is flying.
+    state.angle = Math.max(20,Math.min(80,state.angle + (controls.up ? 1 : 0) - (controls.down ? 1 : 0)));
+    state.power = Math.max(300,Math.min(900,state.power + (controls.right ? 10 : 0) - (controls.left ? 10 : 0)));
+    if (controls.shoot) launchSportsBall(level,state);
+  }
+  if (!state.started) return; // No time pressure while the player reads the instructions.
+  // Small physics steps prevent a fast ball skipping the rim or backboard.
+  // Exact constant-gravity integration keeps identical shots consistent across frame rates.
+  let time = Math.min(Math.max(0,seconds),state.remaining);
+  while (time > 0 && !state.won && !state.expired) {
+    const dt = Math.min(time,1/120);
+    state.remaining = Math.max(0,state.remaining-dt);time -= dt;
+    if (state.ball) stepSportsBall(level,state,dt);
+    // A basket at the buzzer counts: process its crossing before declaring time out.
+    if (state.remaining <= 1e-9 && !state.won) {
+      state.remaining = 0;state.expired = true;state.ball = null;
+      state.message = "Time is up. Press R to try again.";
+    }
+  }
+}
+
+function stepSportsBall(level, state, dt) {
+  const ball = state.ball, config = level.challenge, goal = level.goal;
+  const radius = config.ballRadius, oldX = ball.x, oldY = ball.y;
+  ball.x += ball.vx*dt;
+  ball.y += ball.vy*dt + 0.5*config.gravity*dt*dt;
+  ball.vy += config.gravity*dt;
+  // A basket must cross the rim from ABOVE while descending; touching from below misses.
+  if (oldY < goal.y && ball.y >= goal.y && ball.vy > 0) {
+    const fraction = (goal.y-oldY)/(ball.y-oldY);
+    const crossingX = oldX + (ball.x-oldX)*fraction;
+    if (crossingX >= goal.x+radius && crossingX <= goal.x+goal.width-radius) {
+      state.score += 1;state.ball = null;
+      state.won = state.score >= config.targetScore;
+      state.message = state.won ? "Target reached! Press Enter to finish." : "Basket! Set up your next shot.";
+      return; // Removing the ball prevents a single shot from scoring twice.
+    }
+  }
+  const board = sportsBackboard(level);
+  if (ball.y+radius > board.y && ball.y-radius < board.y+board.height) {
+    if (ball.vx > 0 && oldX+radius <= board.x && ball.x+radius >= board.x) {
+      ball.x = board.x-radius;ball.vx *= -0.6;
+    } else if (ball.vx < 0 && oldX-radius >= board.x+board.width && ball.x-radius <= board.x+board.width) {
+      ball.x = board.x+board.width+radius;ball.vx *= -0.6;
+    }
+  }
+  if (ball.y+radius >= config.floorY || ball.x+radius < 0 || ball.x-radius > level.width) {
+    state.ball = null;state.message = "Miss. Adjust angle or power and try again.";
+  }
+}
+
+function drawSkillChallenge(ctx, level, state) {
+  const config = level.challenge, goal = level.goal, board = sportsBackboard(level);
+  ctx.save();ctx.fillStyle = "#142139";ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.fillStyle = "#986746";ctx.fillRect(0,config.floorY,level.width,level.height-config.floorY);
+  // Hoop and net: only a downward crossing inside the rim scores.
+  ctx.fillStyle = "#e2e8f0";ctx.fillRect(board.x,board.y,board.width,board.height);
+  ctx.strokeStyle = "#e2e8f0";ctx.lineWidth = 2;
+  ctx.beginPath();ctx.moveTo(goal.x,goal.y);ctx.lineTo(goal.x+18,goal.y+42);
+  ctx.lineTo(goal.x+goal.width-18,goal.y+42);ctx.lineTo(goal.x+goal.width,goal.y);ctx.stroke();
+  ctx.strokeStyle = "#fb923c";ctx.lineWidth = 5;
+  ctx.beginPath();ctx.moveTo(goal.x,goal.y);ctx.lineTo(goal.x+goal.width,goal.y);ctx.stroke();
+  // A dotted preview teaches how angle and power affect the arc. Board rebounds are not previewed.
+  if (!state.ball && !state.won && !state.expired) {
+    const a = state.angle*Math.PI/180;ctx.fillStyle = "#94a3b8";
+    for (let t=0;t<3;t+=0.12) {
+      const x=level.spawn.x+Math.cos(a)*state.power*t;
+      const y=level.spawn.y-Math.sin(a)*state.power*t+0.5*config.gravity*t*t;
+      if (x>level.width || y>config.floorY) break;
+      if (y>120) {ctx.beginPath();ctx.arc(x,y,2,0,Math.PI*2);ctx.fill();}
+    }
+  }
+  // The shooter stays at a fixed station. This prototype focuses on shooting skill.
+  ctx.fillStyle = "#60a5fa";ctx.fillRect(level.spawn.x-24,level.spawn.y+18,26,config.floorY-level.spawn.y-18);
+  ctx.beginPath();ctx.arc(level.spawn.x-10,level.spawn.y+6,13,0,Math.PI*2);ctx.fill();
+  const ball = state.ball || (!state.won && !state.expired ? level.spawn : null);
+  if (ball) {ctx.fillStyle = "#fb923c";ctx.beginPath();ctx.arc(ball.x,ball.y,config.ballRadius,0,Math.PI*2);ctx.fill();}
+  // Keep instructions on the right, clear of the optional teacher debug overlay.
+  ctx.fillStyle = "#0b1323";ctx.fillRect(350,12,598,112);
+  ctx.fillStyle = "white";ctx.font = "17px monospace";ctx.textAlign = "left";ctx.textBaseline = "top";
+  ctx.fillText("Score " + state.score + "/" + config.targetScore + " | Time " + Math.ceil(state.remaining) + "s | Shots " + state.shots,364,24);
+  ctx.fillText("Angle " + state.angle + " degrees | Power " + state.power,364,50);
+  ctx.font = "14px monospace";ctx.fillText("Up/Down: angle | Left/Right: power | Space: shoot",364,76);
+  ctx.fillText(state.message,364,100);
+  ctx.restore();
+  drawInteractionPrompt(ctx, state.won ? "Enter: finish | R: retry | Esc: home" : "R: retry | Esc: home");
+}
+
+</script>
+<script>
+// TEACHER-OWNED: a small 3-on-3 prototype. Debra edits the roster in her pack.js.
+// The player's timing and roster stats both matter; no grade or real-person ability is inferred.
+function createBasketball(level) {
+  const players = [];
+  level.basketball.teams.forEach((team,t) => team.players.forEach((p,i) => {
+    players.push(Object.assign({},p,{team:t,index:i,x:t===0?(i===0?240:360):(i===0?720:600),y:i===0?350:i===1?235:465}));
+  }));
+  return {players,hero:players[0].id,owner:players[1].id,flight:null,meter:null,
+    possessionTeam:0,possessionRemaining:14,buzzer:false,
+    score:[0,0],remaining:level.basketball.seconds,age:0,actionAge:0,
+    won:false,finished:false,roster:false,randomSeed:level.basketball.seed,
+    message:"Teammates look for you. E calls for a pass; 1/2 passes to them.",lastShot:null};
+}
+function basketballPlayer(state,id) {return state.players.find(p=>p.id===id);}
+function basketballRandom(state) {
+  // A seeded generator makes classroom bugs reproducible after R restarts a match.
+  state.randomSeed=(Math.imul(1664525,state.randomSeed)+1013904223)>>>0;
+  return state.randomSeed/4294967296;
+}
+function basketballDistance(a,b) {return Math.hypot(a.x-b.x,a.y-b.y);}
+function basketballHoop(team) {return {x:team===0?870:90,y:350};}
+function basketballPressure(state,player) {
+  return Math.min(1,state.players.filter(p=>p.team!==player.team).reduce((sum,p)=>{
+    return sum+Math.max(0,1-basketballDistance(player,p)/95)*(0.4+p.defense/100*0.6);
+  },0));
+}
+function basketballTimingWindow(player) {return 0.07+player.shooting*0.0013;}
+function basketballNeedle(level,meter) {return Math.sin(meter.elapsed*Math.PI*2*level.basketball.meterCycles-Math.PI/2);}
+function basketballShotChance(state,player,error) {
+  const quality=Math.max(0,1-error/(basketballTimingWindow(player)*2));
+  const distance=basketballDistance(player,basketballHoop(player.team));
+  // Timing matters, but range matters too: full-court heaves should not beat working for a close shot.
+  // Higher shooting stats improve the base chance AND make good timing more forgiving.
+  return Math.max(0.03,Math.min(0.98,0.12+player.shooting/100*0.4+quality*0.45
+    -Math.max(0,distance-150)/450-basketballPressure(state,player)*0.24));
+}
+function basketballGiveBall(state,id) {
+  const player=basketballPlayer(state,id);
+  // Passes do not reset the clock. A change of team starts a new 14-second possession.
+  if(player&&player.team!==state.possessionTeam){state.possessionTeam=player.team;state.possessionRemaining=14;}
+  state.owner=id;state.flight=null;state.meter=null;state.actionAge=0;
+}
+function basketballResetPositions(state) {
+  state.players.forEach(p=>{p.x=p.team===0?(p.index===0?240:360):(p.index===0?720:600);p.y=p.index===0?350:p.index===1?235:465;});
+}
+function basketballPass(state,from,to) {
+  if (!from || !to || from.team!==to.team || from.id===to.id) return;
+  const distance=basketballDistance(from,to);
+  // Defenders near the passing lane can intercept. Passing stats reduce that risk.
+  const dx=to.x-from.x,dy=to.y-from.y,length2=dx*dx+dy*dy;
+  let defender=null,best=Infinity;
+  for (const p of state.players.filter(p=>p.team!==from.team)) {
+    const t=length2?Math.max(0,Math.min(1,((p.x-from.x)*dx+(p.y-from.y)*dy)/length2)):0;
+    const d=Math.hypot(p.x-(from.x+t*dx),p.y-(from.y+t*dy));
+    if(t>0.08&&t<0.95&&d<38&&d<best){defender=p;best=d;}
+  }
+  const risk=defender?Math.max(0.02,0.45+defender.defense/250-from.passing/180):0;
+  const target=defender&&basketballRandom(state)<risk?defender:to;
+  state.flight={kind:"pass",from:{x:from.x,y:from.y},to:{x:to.x,y:to.y},target:target.id,
+    elapsed:0,duration:Math.max(0.18,distance/(380+from.passing*3)),intercepted:target!==to};
+  state.owner=null;state.meter=null;state.message=from.name+" passes to "+to.name+".";
+}
+function basketballShoot(level,state,player,error) {
+  const chance=basketballShotChance(state,player,error),hoop=basketballHoop(player.team);
+  const points=basketballDistance(player,hoop)>250?3:2;
+  state.lastShot={shooter:player.id,error,chance,points,made:basketballRandom(state)<chance};
+  state.flight={kind:"shot",from:{x:player.x,y:player.y},to:hoop,elapsed:0,duration:0.8,
+    team:player.team,points,made:state.lastShot.made};
+  // Reaching the basket earns a fresh clock on a rebound, for either team.
+  state.possessionRemaining=14;
+  state.owner=null;state.meter=null;state.message="Shot released: "+Math.round(chance*100)+"% chance.";
+}
+function basketballMove(player,x,y,seconds) {
+  const distance=Math.hypot(x-player.x,y-player.y),step=Math.min(distance,(105+player.speed)*seconds);
+  if(distance){player.x+=(x-player.x)/distance*step;player.y+=(y-player.y)/distance*step;}
+  player.x=Math.max(58,Math.min(902,player.x));player.y=Math.max(148,Math.min(552,player.y));
+}
+function updateBasketball(level,state,seconds,controls) {
+  if(controls.roster) state.roster=!state.roster;
+  if(state.finished||state.roster)return;
+  state.remaining=Math.max(0,state.remaining-seconds);state.age+=seconds;state.actionAge+=seconds;
+  // A shot already in flight at the horn is allowed to finish; no new shot starts at zero.
+  if(state.remaining===0)state.buzzer=true;
+  if(!(state.flight&&state.flight.kind==="shot"))state.possessionRemaining=Math.max(0,state.possessionRemaining-seconds);
+  if(state.possessionRemaining===0&&!state.buzzer){
+    const next=state.players.find(p=>p.team!==state.possessionTeam&&p.index===0);
+    basketballResetPositions(state);basketballGiveBall(state,next.id);
+    state.message="14-second violation. Other team takes possession.";
+  }
+  const hero=basketballPlayer(state,state.hero),owner=basketballPlayer(state,state.owner);
+  const dx=(controls.right?1:0)-(controls.left?1:0),dy=(controls.down?1:0)-(controls.up?1:0);
+  if(!state.meter&& (dx||dy))basketballMove(hero,hero.x+dx*100,hero.y+dy*100,seconds);
+  if(state.meter)state.meter.elapsed+=seconds;
+  if(!state.buzzer&&!state.flight&&owner&&owner.id===hero.id){
+    if(controls.pass1||controls.pass2){basketballPass(state,hero,state.players.find(p=>p.team===0&&p.index===(controls.pass1?1:2)));}
+    else if(controls.shoot){
+      if(state.meter)basketballShoot(level,state,hero,Math.abs(basketballNeedle(level,state.meter)));
+      else {state.meter={elapsed:0};state.message="Click or Space when the white hand meets the red line.";}
+    }
+  } else if(controls.call&&owner&&owner.team===0&&!state.flight)basketballPass(state,owner,hero);
+
+  // Offense spreads out for passes; defense marks its matching opponent.
+  // During shots both teams move toward the rim so rebounds reward court position.
+  for(const p of state.players){
+    if(p.id===hero.id)continue;
+    if(state.flight&&state.flight.kind==="shot"){
+      basketballMove(p,state.flight.to.x+(p.team===0?-24:24),350+(p.index-1)*32,seconds);
+    }else if(state.owner===p.id&&p.team===1){basketballMove(p,210,350,seconds);}
+    else if(p.team===state.possessionTeam){
+      basketballMove(p,p.team===0?Math.min(760,hero.x+105):Math.max(190,(owner?owner.x:480)-105),p.index===1?230:470,seconds);
+    }else{
+      const mark=state.players.find(q=>q.team!==p.team&&q.index===p.index);
+      basketballMove(p,mark.x+(p.team===1?36:-36),mark.y,seconds);
+    }
+  }
+  const current=basketballPlayer(state,state.owner);
+  if(current&&!state.flight&&!state.buzzer){
+    if(current.team===0&&current.id!==hero.id&&state.actionAge>0.85){
+      // Favor the main player. If she is heavily guarded, make one support pass instead.
+      const other=state.players.find(p=>p.team===0&&p.id!==hero.id&&p.id!==current.id);
+      basketballPass(state,current,basketballPressure(state,hero)<0.85?hero:other);
+    } else if(current.team===1&&state.actionAge>0.85&&basketballPressure(state,current)>0.45){
+      // A guarded opponent can pass too: chasing one ball carrier should not guarantee a steal.
+      const outlet=state.players.filter(p=>p.team===1&&p.id!==current.id)
+        .sort((a,b)=>basketballPressure(state,a)-basketballPressure(state,b))[0];
+      if(basketballPressure(state,outlet)+0.15<basketballPressure(state,current))basketballPass(state,current,outlet);
+      else if(state.actionAge>1.2&&basketballDistance(current,basketballHoop(1))<190)
+        basketballShoot(level,state,current,basketballRandom(state)*0.18);
+    } else if(current.team===1&&state.actionAge>1.2&&basketballDistance(current,basketballHoop(1))<190){
+      // NPCs use the same stats/pressure accuracy formula, with simulated timing.
+      basketballShoot(level,state,current,basketballRandom(state)*0.18);
+    }
+    // Contact steals use elapsed time, avoiding a frame-rate advantage.
+    if(state.owner&&state.actionAge>0.8){
+      const guard=state.players.find(p=>p.team!==current.team&&basketballDistance(p,current)<36);
+      if(guard&&basketballRandom(state)<1-Math.exp(-(0.15+guard.defense/100*0.35)*seconds)){
+        basketballGiveBall(state,guard.id);state.message=guard.name+" steals the ball.";
+      }
+    }
+  }
+  if(state.buzzer&&state.flight&&state.flight.kind==="pass")state.flight=null;
+  if(state.flight){
+    const f=state.flight;f.elapsed+=seconds;
+    if(f.elapsed>=f.duration){
+      if(f.kind==="pass") {basketballGiveBall(state,f.target);state.message=f.intercepted?"Pass intercepted!":"Pass received.";}
+      else if(f.made){
+        state.score[f.team]+=f.points;basketballResetPositions(state);
+        basketballGiveBall(state,state.players.find(p=>p.team!==f.team&&p.index===0).id);
+        state.message=f.points+" points! Other team takes possession.";
+      }else{
+        const rebound=state.players.slice().sort((a,b)=>basketballDistance(a,f.to)-basketballDistance(b,f.to))[0];
+        basketballGiveBall(state,rebound.id);state.message="Miss. "+rebound.name+" gets the rebound.";
+      }
+    }
+  }
+  // Separate overlapping player circles to keep possession and defense readable.
+  for(let i=0;i<state.players.length;i++)for(let j=i+1;j<state.players.length;j++){
+    const a=state.players[i],b=state.players[j],d=basketballDistance(a,b);
+    if(d<28){const nx=d?(a.x-b.x)/d:1,ny=d?(a.y-b.y)/d:0,shift=(28-d)/2;
+      a.x+=nx*shift;a.y+=ny*shift;b.x-=nx*shift;b.y-=ny*shift;}
+  }
+  state.players.forEach(p=>{p.x=Math.max(58,Math.min(902,p.x));p.y=Math.max(148,Math.min(552,p.y));});
+  if(state.score.some(s=>s>=level.basketball.targetScore)||(state.buzzer&&!state.flight)){
+    state.finished=true;state.won=state.score[0]>state.score[1];state.meter=null;state.flight=null;
+    state.message=state.won?"You win! Enter saves the result and returns home.":state.score[0]===state.score[1]?"Tie game. R to retry, Esc for home.":"Match over. R to retry, Esc for home.";
+  }
+}
+
+function drawBasketball(ctx,level,state){
+  ctx.save();ctx.fillStyle="#6e171e";ctx.fillRect(0,0,960,640);
+  // Original Canvas court inspired by the supplied bird's-eye reference, not an embedded image.
+  ctx.fillStyle="#cfa774";ctx.fillRect(40,130,880,440);
+  for(let y=130;y<570;y+=22){ctx.fillStyle=(y/22|0)%2?"#d8b583":"#cba16c";ctx.fillRect(40,y,880,21);}
+  ctx.fillStyle="#9b2630";ctx.fillRect(40,275,160,150);ctx.fillRect(760,275,160,150);
+  ctx.strokeStyle="#fff1d9";ctx.lineWidth=3;ctx.strokeRect(40,130,880,440);
+  ctx.beginPath();ctx.moveTo(480,130);ctx.lineTo(480,570);ctx.stroke();
+  ctx.beginPath();ctx.arc(480,350,62,0,Math.PI*2);ctx.stroke();
+  ctx.strokeRect(40,275,160,150);ctx.strokeRect(760,275,160,150);
+  // Court markings stop at the sidelines, like the reference court diagram.
+  ctx.save();ctx.beginPath();ctx.rect(40,130,880,440);ctx.clip();
+  [0,1].forEach(team=>{const h=basketballHoop(team);ctx.beginPath();ctx.arc(h.x,h.y,250,team===0?Math.PI/2:-Math.PI/2,team===0?Math.PI*1.5:Math.PI/2);ctx.stroke();
+    ctx.fillStyle="#eee";ctx.fillRect(team===0?896:58,322,6,56);ctx.strokeStyle="#ff9f32";ctx.beginPath();ctx.arc(h.x,h.y,14,0,Math.PI*2);ctx.stroke();ctx.strokeStyle="#fff1d9";});
+  ctx.restore();
+  for(const p of state.players){
+    ctx.fillStyle=p.team===0?"#1769d2":"#ba233d";ctx.beginPath();ctx.arc(p.x,p.y,14,0,Math.PI*2);ctx.fill();
+    if(p.id===state.hero){ctx.strokeStyle="#fff";ctx.lineWidth=3;ctx.beginPath();ctx.arc(p.x,p.y,19,0,Math.PI*2);ctx.stroke();}
+    ctx.font="12px monospace";ctx.textAlign="center";ctx.fillStyle="white";ctx.fillText(p.index===0?(p.team===0?"YOU":"1"):String(p.index+1),p.x,p.y+4);
+    ctx.fillStyle="#101827";ctx.fillText(p.name,p.x,p.y-22);
+  }
+  let ball=basketballPlayer(state,state.owner);
+  if(state.flight){const f=state.flight,t=Math.min(1,f.elapsed/f.duration);ball={x:f.from.x+(f.to.x-f.from.x)*t,y:f.from.y+(f.to.y-f.from.y)*t-Math.sin(t*Math.PI)*(f.kind==="shot"?65:15)};}
+  if(ball){ctx.fillStyle="#fb923c";ctx.strokeStyle="#7c2d12";ctx.lineWidth=2;ctx.beginPath();ctx.arc(ball.x+9,ball.y+9,7,0,Math.PI*2);ctx.fill();ctx.stroke();}
+  ctx.fillStyle="#101827";ctx.fillRect(0,0,960,118);ctx.fillStyle="white";ctx.textAlign="left";ctx.font="19px monospace";
+  ctx.fillText("BASKETBALL CHAMP  |  Blue "+state.score[0]+" : "+state.score[1]+" Red  |  "+Math.ceil(state.remaining)+"s  | Ball "+Math.ceil(state.possessionRemaining)+"s",24,32);
+  ctx.font="14px monospace";ctx.fillText("Move: WASD/arrows | E: call | 1/2: pass | Click/Space: shoot & release",24,60);
+  ctx.fillText("Tab: roster (pauses) | R: restart | Esc: home | Blue attacks RIGHT",24,84);
+  ctx.fillText(state.message,24,108);
+  if(state.meter){
+    const hero=basketballPlayer(state,state.hero),needle=basketballNeedle(level,state.meter),window=basketballTimingWindow(hero);
+    const cx=480,cy=535,angle=-Math.PI/2+needle*1.05;
+    ctx.fillStyle="rgba(10,18,33,0.95)";ctx.fillRect(270,382,420,210);
+    ctx.strokeStyle="#3b556c";ctx.lineWidth=6;ctx.beginPath();ctx.arc(cx,cy,90,-Math.PI/2-1.05,-Math.PI/2+1.05);ctx.stroke();
+    ctx.strokeStyle="#4ade80";ctx.lineWidth=10;ctx.beginPath();ctx.arc(cx,cy,90,-Math.PI/2-window*1.05,-Math.PI/2+window*1.05);ctx.stroke();
+    ctx.strokeStyle="#ff4545";ctx.lineWidth=4;ctx.beginPath();ctx.moveTo(cx,cy-65);ctx.lineTo(cx,cy-103);ctx.stroke();
+    ctx.strokeStyle="white";ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(cx+Math.cos(angle)*92,cy+Math.sin(angle)*92);ctx.stroke();
+    ctx.fillStyle="white";ctx.textAlign="center";ctx.font="16px monospace";ctx.fillText("Click when the hand meets RED",cx,410);
+    ctx.fillText("Shot chance: "+Math.round(basketballShotChance(state,hero,Math.abs(needle))*100)+"%",cx,565);
+  }
+  if(state.roster){ctx.fillStyle="rgba(10,18,33,0.97)";ctx.fillRect(160,170,640,330);ctx.fillStyle="white";ctx.textAlign="left";ctx.font="17px monospace";
+    ctx.fillText("ROSTER — edit individual stats in pack.js",184,204);ctx.fillText("Name             Shoot  Pass  Speed  Defense",184,240);
+    state.players.forEach((p,i)=>ctx.fillText(p.name.padEnd(17)+String(p.shooting).padEnd(7)+String(p.passing).padEnd(6)+String(p.speed).padEnd(7)+p.defense,184,274+i*29));
+    ctx.fillText("Placeholder stats; Debra chooses the final values.",184,480);
+  }
+  ctx.restore();
+}
+
+</script>
+<script>
+// SIMONE'S SOCCER STARTER: top-down dribbling and a timed shooting challenge.
+// Students edit level.soccer. This first version is one attacker versus one goalkeeper.
+function createSoccer(level){
+ const c=level.soccer,g=level.goal;
+ return {player:{x:level.spawn.x,y:level.spawn.y},keeper:{x:g.x-46,y:g.y+g.height/2-c.keeperHeight/2,width:18,height:c.keeperHeight,direction:1},
+   angle:0,power:c.startPower,ball:null,recovery:0,score:0,shots:0,saves:0,remaining:c.seconds,started:false,won:false,expired:false,
+   message:"Move into position. The clock starts with your first kick."};
+}
+function soccerKick(level,state){
+ const radians=state.angle*Math.PI/180;
+ state.ball={x:state.player.x+20,y:state.player.y,vx:Math.cos(radians)*state.power,vy:Math.sin(radians)*state.power};
+ state.shots++;state.started=true;state.message="Kick in flight. Aim away from the keeper!";
+}
+function soccerEndShot(state,message){state.ball=null;state.recovery=0.65;state.message=message;}
+function stepSoccer(level,state,dt){
+ const c=level.soccer,g=level.goal,k=state.keeper;
+ // The keeper patrols before a shot, then tracks its current Y position at a limited speed.
+ // It cannot teleport or know the shot's future path. Try aiming for the opposite corner.
+ if(state.ball){const target=state.ball.y-k.height/2;k.y+=Math.sign(target-k.y)*Math.min(Math.abs(target-k.y),c.keeperSpeed*dt);}
+ else k.y+=k.direction*c.keeperSpeed*0.7*dt;
+ if(k.y<=g.y){k.y=g.y;k.direction=1;}if(k.y+k.height>=g.y+g.height){k.y=g.y+g.height-k.height;k.direction=-1;}
+ if(!state.ball)return;
+ const b=state.ball,r=c.ballRadius,oldX=b.x,oldY=b.y,speed=Math.hypot(b.vx,b.vy);
+ const movingTime=Math.min(dt,speed/c.drag),distance=speed*movingTime-0.5*c.drag*movingTime*movingTime;
+ const dx=speed?b.vx/speed*distance:0,dy=speed?b.vy/speed*distance:0;
+ // Reuse the shared swept rectangle check: fast kicks cannot jump through the keeper.
+ if(shooterHitTime(oldX,oldY,dx,dy,k,r)!==null){state.saves++;soccerEndShot(state,"Saved! Move or aim toward an open corner.");return;}
+ b.x+=dx;b.y+=dy;const nextSpeed=Math.max(0,speed-c.drag*dt);
+ if(speed){b.vx=b.vx/speed*nextSpeed;b.vy=b.vy/speed*nextSpeed;}
+ // The WHOLE ball must cross the goal line, inside both posts. Each shot counts once.
+ if(oldX-r<g.x&&b.x-r>=g.x){
+  const t=(g.x+r-oldX)/dx,crossY=oldY+dy*t;
+  if(crossY-r>=g.y&&crossY+r<=g.y+g.height){
+   state.score++;state.won=state.score>=c.targetScore;
+   soccerEndShot(state,state.won?"Target reached! Enter saves your win.":"GOAL! Find space for your next shot.");
+  }else soccerEndShot(state,"Wide of the posts. Adjust your aim.");
+  return;
+ }
+ if(b.y-r<140||b.y+r>590||b.x<40||nextSpeed<35)soccerEndShot(state,"Out or stopped. Try a closer or stronger kick.");
+}
+function updateSoccer(level,state,seconds,controls){
+ if(state.won||state.expired)return;
+ const c=level.soccer;
+ // Movement and aiming are independent; diagonal walking is normalized.
+ const x=(controls.right?1:0)-(controls.left?1:0),y=(controls.down?1:0)-(controls.up?1:0),length=Math.hypot(x,y);
+ if(length){state.player.x+=x/length*c.playerSpeed*seconds;state.player.y+=y/length*c.playerSpeed*seconds;}
+ state.player.x=Math.max(60,Math.min(c.shootingLine,state.player.x));state.player.y=Math.max(160,Math.min(570,state.player.y));
+ state.angle=Math.max(-50,Math.min(50,state.angle+((controls.aimDown?1:0)-(controls.aimUp?1:0))*45*seconds));
+ state.power=Math.max(320,Math.min(720,state.power+((controls.stronger?1:0)-(controls.weaker?1:0))*180*seconds));
+ state.recovery=Math.max(0,state.recovery-seconds);
+ if(controls.kick&&!state.ball&&state.recovery===0)soccerKick(level,state);
+ let time=state.started?Math.min(Math.max(0,seconds),state.remaining):Math.max(0,seconds);
+ // Fixed small steps and exact drag integration keep the shot consistent at different frame rates.
+ while(time>1e-9&&!state.won&&!state.expired){
+  const dt=Math.min(time,1/120);time-=dt;if(state.started)state.remaining=Math.max(0,state.remaining-dt);
+  stepSoccer(level,state,dt);
+  // A crossing at the buzzer counts, but an unfinished kick is not extended after time expires.
+  if(state.started&&state.remaining<=1e-9&&!state.won){state.remaining=0;state.expired=true;state.ball=null;state.message="Time is up. R retries; Escape returns home.";}
+ }
+}
+function drawSoccer(ctx,level,state){
+ const c=level.soccer,g=level.goal,k=state.keeper;
+ ctx.save();ctx.fillStyle="#102c24";ctx.fillRect(0,0,960,640);
+ for(let x=40;x<880;x+=70){ctx.fillStyle=(x-40)/70%2?"#237448":"#286f43";ctx.fillRect(x,140,70,450);}
+ ctx.strokeStyle="#e5f5df";ctx.lineWidth=3;ctx.strokeRect(40,140,g.x-40,450);
+ ctx.beginPath();ctx.moveTo(460,140);ctx.lineTo(460,590);ctx.stroke();ctx.beginPath();ctx.arc(460,365,65,0,Math.PI*2);ctx.stroke();
+ ctx.strokeRect(g.x-145,g.y-35,145,g.height+70);
+ ctx.fillStyle="#172b34";ctx.fillRect(g.x,g.y,40,g.height);ctx.strokeRect(g.x,g.y,40,g.height);
+ ctx.lineWidth=1;for(let y=g.y;y<g.y+g.height;y+=20){ctx.beginPath();ctx.moveTo(g.x,y);ctx.lineTo(g.x+40,y);ctx.stroke();}
+ ctx.setLineDash([7,7]);ctx.strokeStyle="#fde68a";ctx.beginPath();ctx.moveTo(c.shootingLine,140);ctx.lineTo(c.shootingLine,590);ctx.stroke();ctx.setLineDash([]);
+ ctx.fillStyle="#fb7185";ctx.fillRect(k.x,k.y,k.width,k.height);ctx.fillStyle="white";ctx.font="13px monospace";ctx.textAlign="center";ctx.fillText("Keeper",k.x+k.width/2,k.y-10);
+ const p=state.player;ctx.fillStyle="#60a5fa";ctx.beginPath();ctx.arc(p.x,p.y,14,0,Math.PI*2);ctx.fill();ctx.strokeStyle="white";ctx.stroke();
+ if(!state.ball&&!state.won&&!state.expired){
+  const angle=state.angle*Math.PI/180;ctx.strokeStyle="#fde68a";ctx.beginPath();ctx.moveTo(p.x+20,p.y);ctx.lineTo(p.x+20+Math.cos(angle)*90,p.y+Math.sin(angle)*90);ctx.stroke();
+ }
+ const b=state.ball||(!state.won&&!state.expired?{x:p.x+20,y:p.y}:null);
+ if(b){ctx.fillStyle="white";ctx.beginPath();ctx.arc(b.x,b.y,c.ballRadius,0,Math.PI*2);ctx.fill();ctx.fillStyle="#172b34";ctx.fillRect(b.x-3,b.y-3,6,6);}
+ ctx.fillStyle="#101827";ctx.fillRect(0,0,960,128);ctx.fillStyle="white";ctx.textAlign="left";ctx.font="21px monospace";
+ ctx.fillText("SIMONE'S SOCCER | Goals "+state.score+"/"+c.targetScore+" | "+Math.ceil(state.remaining)+"s | Shots "+state.shots,22,29);
+ ctx.font="14px monospace";ctx.fillText("WASD/arrows: dribble | I/K: aim up/down | J/L: power | Space: kick",22,56);
+ ctx.fillText("Aim "+Math.round(state.angle)+" degrees | Power "+Math.round(state.power)+" | R: retry | Esc: home",22,80);
+ ctx.fillText(state.message,22,108);ctx.fillText("Shoot before the yellow line. Reach the goal target, then Enter to finish.",22,620);ctx.restore();
+}
+
+</script>
+<script>
+// JACENTO'S FOOTBALL: a ball-carrying drill, with independent state for each attempt.
+// Students tune level.football in their pack. Positions are centers; speeds are pixels/second.
+function createFootball(level){
+ const c=level.football;
+ const state={touchdowns:0,attempt:1,remaining:c.seconds,phase:"ready",won:false,expired:false};
+ footballResetPlay(level,state);return state;
+}
+function footballResetPlay(level,state){
+ // Copy design data so retry and replay never change the student's saved pack.
+ state.player={x:level.spawn.x,y:level.spawn.y};state.stamina=level.football.sprintSeconds;
+ state.defenders=level.football.defenders.map(d=>({x:d.x,y:d.y,homeX:d.x,direction:d.direction||1}));
+ state.message="Enter starts the play. Carry the ball into the right end zone.";
+}
+function footballCircleHits(p,r,box){
+ const x=Math.max(box.x,Math.min(p.x,box.x+box.width)),y=Math.max(box.y,Math.min(p.y,box.y+box.height));
+ return Math.hypot(p.x-x,p.y-y)<r;
+}
+function footballMove(level,p,dx,dy,r){
+ // Move one axis at a time: hitting a training barrier lets you slide along its edge.
+ // Small simulation steps prevent fast players or defenders from skipping through barriers.
+ const oldX=p.x;p.x=Math.max(60+r,Math.min(900-r,p.x+dx));
+ if(level.solids.some(b=>footballCircleHits(p,r,b)))p.x=oldX;
+ const oldY=p.y;p.y=Math.max(150+r,Math.min(580-r,p.y+dy));
+ if(level.solids.some(b=>footballCircleHits(p,r,b)))p.y=oldY;
+}
+function footballFinishPlay(level,state,touchdown){
+ if(touchdown)state.touchdowns++;
+ state.won=state.touchdowns>=level.football.targetTouchdowns;
+ state.phase=state.won?"won":state.attempt>=level.football.attempts?"lost":"between";
+ state.message=state.won?"Challenge won! Enter saves your result.":
+  state.phase==="lost"?"Attempts used. R retries the whole challenge.":
+  touchdown?"TOUCHDOWN! Enter sets up the next play.":"Tackled! Change your route. Enter starts a new play.";
+}
+function updateFootball(level,state,seconds,controls){
+ if(state.won||state.expired||state.phase==="lost")return;
+ const c=level.football;
+ // Enter explicitly starts each play. Reading the instructions never spends clock time.
+ if(state.phase==="ready"||state.phase==="between"){
+  if(!controls.start)return;
+  if(state.phase==="between"){state.attempt++;footballResetPlay(level,state);}
+  state.phase="running";state.message="Find a gap. Hold Space while moving to sprint.";
+ }
+ let time=Math.min(Math.max(0,seconds),state.remaining);
+ while(time>1e-9&&state.phase==="running"){
+  const dt=Math.min(time,1/120);time-=dt;state.remaining=Math.max(0,state.remaining-dt);
+  const p=state.player,x=(controls.right?1:0)-(controls.left?1:0),y=(controls.down?1:0)-(controls.up?1:0),length=Math.hypot(x,y);
+  // Sprint uses an energy budget. Once empty, release Space to recover before sprinting again.
+  const sprint=controls.sprint&&length>0&&state.stamina>0;
+  const sprintTime=sprint?Math.min(dt,state.stamina):0;
+  const distance=c.playerSpeed*dt+(c.sprintSpeed-c.playerSpeed)*sprintTime;
+  if(sprint)state.stamina=Math.max(0,state.stamina-dt);
+  else if(!controls.sprint)state.stamina=Math.min(c.sprintSeconds,state.stamina+c.recovery*dt);
+  if(length)footballMove(level,p,x/length*distance,y/length*distance,14);
+  for(const d of state.defenders){
+   // Defenders patrol a lane, then pursue nearby runners at a slower speed.
+   // They see current position only, never teleport, and obey the same barriers.
+   const dx=p.x-d.x,dy=p.y-d.y,range=Math.hypot(dx,dy);
+   if(range<c.noticeRadius&&range>0)footballMove(level,d,dx/range*c.defenderSpeed*dt,dy/range*c.defenderSpeed*dt,14);
+   else{
+    footballMove(level,d,Math.sign(d.homeX-d.x)*Math.min(Math.abs(d.homeX-d.x),c.defenderSpeed*dt),d.direction*c.defenderSpeed*0.65*dt,14);
+    if(d.y<=170)d.direction=1;if(d.y>=560)d.direction=-1;
+   }
+  }
+  // A tackle wins ties with a touchdown. Reach the goal with your entire player circle.
+  if(state.defenders.some(d=>Math.hypot(p.x-d.x,p.y-d.y)<=28)){footballFinishPlay(level,state,false);}
+  else if(p.x-14>=level.goal.x){footballFinishPlay(level,state,true);}
+  // A completed winning run at the buzzer counts; every other unfinished challenge expires.
+  if(state.remaining<=1e-9&&!state.won){state.remaining=0;state.expired=true;state.phase="lost";state.message="Time is up. R retries; Escape returns home.";}
+ }
+}
+function drawFootball(ctx,level,state){
+ const c=level.football;ctx.save();ctx.fillStyle="#102b28";ctx.fillRect(0,0,960,640);
+ ctx.fillStyle="#287347";ctx.fillRect(60,150,840,430);
+ ctx.fillStyle="#164e63";ctx.fillRect(level.goal.x,150,900-level.goal.x,430);
+ ctx.strokeStyle="#e6f5df";ctx.lineWidth=2;ctx.strokeRect(60,150,840,430);
+ ctx.font="14px monospace";ctx.textAlign="center";
+ for(let x=140;x<810;x+=84){ctx.beginPath();ctx.moveTo(x,150);ctx.lineTo(x,580);ctx.stroke();ctx.fillStyle="#d9eddb";ctx.fillText(String(Math.round((x-60)/8.4)),x,170);}
+ ctx.save();ctx.translate(866,365);ctx.rotate(-Math.PI/2);ctx.font="24px monospace";ctx.fillStyle="white";ctx.fillText("END ZONE",0,0);ctx.restore();
+ // Orange striped pads are solid training obstacles, not collectible objects.
+ for(const b of level.solids){ctx.fillStyle="#c66a18";ctx.fillRect(b.x,b.y,b.width,b.height);ctx.strokeStyle="#ffe5a0";ctx.strokeRect(b.x,b.y,b.width,b.height);}
+ function player(p,color,label){ctx.fillStyle=color;ctx.beginPath();ctx.arc(p.x,p.y,14,0,Math.PI*2);ctx.fill();ctx.strokeStyle="white";ctx.stroke();ctx.fillStyle="white";ctx.font="12px monospace";ctx.fillText(label,p.x,p.y-22);}
+ state.defenders.forEach((d,i)=>player(d,"#e85d75",String(i+1)));
+ player(state.player,"#60a5fa","YOU");
+ // The football stays in the runner's hands: this drill has no throwing or loose-ball rules.
+ ctx.fillStyle="#9a572c";ctx.beginPath();ctx.ellipse(state.player.x+12,state.player.y,9,5,0.5,0,Math.PI*2);ctx.fill();ctx.strokeStyle="white";ctx.beginPath();ctx.moveTo(state.player.x+8,state.player.y);ctx.lineTo(state.player.x+16,state.player.y);ctx.stroke();
+ ctx.fillStyle="#101827";ctx.fillRect(0,0,960,132);ctx.fillStyle="white";ctx.textAlign="left";ctx.font="21px monospace";
+ ctx.fillText("CENTO'S ISLAND | TD "+state.touchdowns+"/"+c.targetTouchdowns+" | Play "+state.attempt+"/"+c.attempts+" | "+Math.ceil(state.remaining)+"s",22,29);
+ ctx.font="14px monospace";ctx.fillText("WASD/arrows: run | Hold Space: sprint | Enter: start/next play | R: retry | Esc: home",22,56);
+ ctx.fillText("Sprint",22,81);ctx.fillStyle="#334155";ctx.fillRect(85,69,150,14);ctx.fillStyle="#5eead4";ctx.fillRect(85,69,150*state.stamina/c.sprintSeconds,14);
+ ctx.fillStyle="white";ctx.fillText("Score: "+state.touchdowns*6,260,81);ctx.fillText(state.message,22,110);
+ ctx.fillText("Avoid red defenders and orange pads. Clock pauses between plays; retry resets everything.",22,615);ctx.restore();
+}
+
+</script>
+<script>
+// DORRIES'S RANCH: a timed, top-down calf-catching starter.
+// Students edit level.ranch in pack.js. Centers and ranges are pixels; speeds use seconds.
+function createRanch(level){
+ const c=level.ranch;
+ return {player:{x:level.spawn.x,y:level.spawn.y},calves:c.calves.map(calf=>{
+   const angle=calf.heading*Math.PI/180;
+   return {id:calf.id,x:calf.x,y:calf.y,dx:Math.cos(angle),dy:Math.sin(angle),caught:false};
+  }),caught:0,throws:0,cooldown:0,remaining:c.seconds,started:false,won:false,expired:false,
+  rope:null,message:"Enter starts. Move close, then tap Space when a calf glows green."};
+}
+function ranchNearest(level,state){
+ // A single tap targets only the nearest uncaught calf whose CENTER is in the circle.
+ // Ties follow pack order, so the same input always has the same result.
+ let nearest=null,distance=level.ranch.catchRange;
+ for(const calf of state.calves){
+  const d=Math.hypot(calf.x-state.player.x,calf.y-state.player.y);
+  if(!calf.caught&&d<=distance&&(!nearest||d<distance)){nearest=calf;distance=d;}
+ }
+ return nearest;
+}
+function ranchCatch(level,state){
+ if(!state.started||state.won||state.expired||state.remaining<=0||state.cooldown>0)return;
+ const calf=ranchNearest(level,state);state.throws++;state.cooldown=level.ranch.catchCooldown;
+ // Capturing moves a calf to the illustrated safe pen, never damages it. No manual delivery needed.
+ state.rope={x:calf?calf.x:state.player.x+level.ranch.catchRange,y:calf?calf.y:state.player.y,remaining:0.22,success:!!calf};
+ if(!calf){state.message="Miss! Get a calf's center inside the circle, then tap Space again.";return;}
+ calf.caught=true;state.caught++;state.won=state.caught>=level.ranch.targetCatches;
+ state.message=state.won?"Calves safe! Enter saves your win.":"Caught! Find the next calf. Release Space before throwing again.";
+}
+function updateRanch(level,state,seconds,controls){
+ if(state.won||state.expired)return;
+ if(!state.started){if(!controls.start)return;state.started=true;state.message="Green calf = in range. Tap Space to catch; holding it does not repeat.";}
+ // Resolve the fresh press at the current position, before simulating the next time slice.
+ // A catch while time remains counts; once the clock reaches zero the round is frozen.
+ if(controls.catch)ranchCatch(level,state);
+ let time=Math.min(Math.max(0,seconds),state.remaining);const c=level.ranch;
+ while(time>1e-9&&!state.won){
+  const dt=Math.min(time,1/120);time-=dt;state.remaining=Math.max(0,state.remaining-dt);
+  state.cooldown=Math.max(0,state.cooldown-dt);
+  if(state.rope){state.rope.remaining-=dt;if(state.rope.remaining<=0)state.rope=null;}
+  // Normalize diagonal movement so it is no faster than walking straight.
+  const x=(controls.right?1:0)-(controls.left?1:0),y=(controls.down?1:0)-(controls.up?1:0),length=Math.hypot(x,y),p=state.player;
+  if(length){p.x+=x/length*c.playerSpeed*dt;p.y+=y/length*c.playerSpeed*dt;}
+  p.x=Math.max(74,Math.min(886,p.x));p.y=Math.max(164,Math.min(566,p.y));
+  for(const calf of state.calves){
+   if(calf.caught)continue;
+   // Roam along a heading until a fence reflects it. Nearby calves flee the runner.
+   // The player stays faster: anticipating a route helps, but a novice can still catch up.
+   const dx=calf.x-p.x,dy=calf.y-p.y,d=Math.hypot(dx,dy);
+   if(d>1e-6&&d<c.fleeRadius){calf.dx=dx/d;calf.dy=dy/d;}
+   calf.x+=calf.dx*c.calfSpeed*dt;calf.y+=calf.dy*c.calfSpeed*dt;
+   if(calf.x<74){calf.x=74;calf.dx=Math.abs(calf.dx);}if(calf.x>886){calf.x=886;calf.dx=-Math.abs(calf.dx);}
+   if(calf.y<164){calf.y=164;calf.dy=Math.abs(calf.dy);}if(calf.y>566){calf.y=566;calf.dy=-Math.abs(calf.dy);}
+  }
+  if(state.remaining<=1e-9){state.remaining=0;state.expired=true;state.rope=null;state.message="Time is up. R retries the whole round; Escape returns home.";break;}
+ }
+}
+function drawRanch(ctx,level,state){
+ const c=level.ranch,p=state.player,target=ranchNearest(level,state);
+ ctx.save();ctx.fillStyle="#222e25";ctx.fillRect(0,0,960,640);
+ // Original canvas artwork keeps exports self-contained: grass, fence, barn and animal shapes.
+ ctx.fillStyle="#638d42";ctx.fillRect(60,150,840,430);
+ for(let y=176;y<570;y+=42)for(let x=83;x<890;x+=47){ctx.strokeStyle="#749c50";ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x+3,y-6);ctx.lineTo(x+7,y);ctx.stroke();}
+ ctx.strokeStyle="#dec596";ctx.lineWidth=5;ctx.strokeRect(60,150,840,430);
+ ctx.fillStyle="#dec596";for(let x=60;x<=900;x+=60){ctx.fillRect(x-4,144,8,16);ctx.fillRect(x-4,572,8,16);}
+ // The header pen is a score display, outside the playable pasture.
+ ctx.fillStyle="#101827";ctx.fillRect(0,0,960,130);ctx.fillStyle="#a84f42";ctx.fillRect(764,48,168,70);ctx.fillStyle="#e1b886";ctx.beginPath();ctx.moveTo(752,48);ctx.lineTo(848,16);ctx.lineTo(944,48);ctx.fill();
+ ctx.fillStyle="#e8dfc7";ctx.font="12px monospace";ctx.textAlign="center";ctx.fillText("SAFE PEN",848,65);
+ function calfShape(x,y,highlight,label){
+  if(highlight){ctx.strokeStyle="#b6ff9a";ctx.lineWidth=3;ctx.beginPath();ctx.arc(x,y,22,0,Math.PI*2);ctx.stroke();}
+  ctx.fillStyle="#efe3cb";ctx.beginPath();ctx.ellipse(x,y,15,10,0,0,Math.PI*2);ctx.fill();ctx.fillStyle="#80543a";ctx.fillRect(x-6,y-7,8,10);
+  ctx.fillStyle="#dac2a0";ctx.beginPath();ctx.ellipse(x+13,y,7,8,0,0,Math.PI*2);ctx.fill();ctx.fillStyle="#392c26";ctx.fillRect(x+15,y-4,2,2);
+  ctx.fillRect(x-10,y+8,4,5);ctx.fillRect(x+6,y+8,4,5);
+  if(label){ctx.fillStyle="white";ctx.font="12px monospace";ctx.fillText(label,x,y-26);}
+ }
+ let safe=0;state.calves.forEach((calf,i)=>{if(calf.caught){calfShape(785+(safe%4)*38,86+Math.floor(safe/4)*20,false,"");safe++;}else calfShape(calf.x,calf.y,calf===target,String(i+1));});
+ // The exact mechanical range is visible; green means a target is ready, amber means empty/cooldown.
+ ctx.strokeStyle=target&&state.cooldown===0?"#b6ff9a":"#f3d48b";ctx.lineWidth=2;ctx.setLineDash([6,5]);ctx.beginPath();ctx.arc(p.x,p.y,c.catchRange,0,Math.PI*2);ctx.stroke();ctx.setLineDash([]);
+ ctx.fillStyle="#75b7ec";ctx.beginPath();ctx.arc(p.x,p.y,14,0,Math.PI*2);ctx.fill();ctx.fillStyle="#c79753";ctx.beginPath();ctx.ellipse(p.x,p.y-4,20,7,0,0,Math.PI*2);ctx.fill();ctx.fillStyle="#8c602f";ctx.fillRect(p.x-8,p.y-12,16,9);
+ if(state.rope){ctx.strokeStyle=state.rope.success?"#b6ff9a":"#f3d48b";ctx.beginPath();ctx.moveTo(p.x,p.y);ctx.lineTo(state.rope.x,state.rope.y);ctx.stroke();ctx.beginPath();ctx.arc(state.rope.x,state.rope.y,18,0,Math.PI*2);ctx.stroke();}
+ ctx.textAlign="left";ctx.fillStyle="white";ctx.font="21px monospace";ctx.fillText("CELIYANO BARN | Caught "+state.caught+"/"+c.targetCatches+" | "+Math.ceil(state.remaining)+"s",22,29);
+ ctx.font="14px monospace";ctx.fillText("WASD/arrows: move | Tap Space: catch | Enter: start/save win",22,55);
+ ctx.fillText("Throws: "+state.throws+" | Lasso: "+(state.cooldown>0?state.cooldown.toFixed(1)+"s":"ready")+" | R: retry | Esc: home",22,79);
+ ctx.fillText(state.message,22,110);ctx.fillText("Catch the calf's center inside your circle. Calves go directly to the safe pen.",22,616);ctx.restore();
+}
+
+</script>
+<script>
+// TEACHER-OWNED: Main Plaza tilemap. Home icons are placed by homeRegistry, not this file.
+const TILE_SIZE = 32;
+
+const TILE_COLORS = {
+  0: null,
+  1: "#4caf50",
+  2: "#d2b48c",
+  3: "#3a83c4",
+  4: "#1b5e20",
+  5: "#8d5524",
+  6: "#777777"
+};
+
+// Collision tiles: water, trees, buildings, and walls block movement.
+const COLLISION_TILE_IDS = [3, 4, 5, 6];
+
+function createEmptyLayer(width, height, fillValue) {
+  const layer = [];
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      layer.push(fillValue);
+    }
+  }
+  return layer;
+}
+
+function setTile(layer, width, x, y, value) {
+  layer[y * width + x] = value;
+}
+
+function fillRect(layer, width, x, y, w, h, value) {
+  for (let row = y; row < y + h; row++) {
+    for (let col = x; col < x + w; col++) {
+      setTile(layer, width, col, row, value);
+    }
+  }
+}
+
+function buildMainPlazaLayers(width, height) {
+  const ground = createEmptyLayer(width, height, 1);
+  const collision = createEmptyLayer(width, height, 0);
+
+  // Border trees around the plaza.
+  for (let x = 0; x < width; x++) {
+    setTile(ground, width, x, 0, 4);
+    setTile(collision, width, x, 0, 4);
+    setTile(ground, width, x, height - 1, 4);
+    setTile(collision, width, x, height - 1, 4);
+  }
+  for (let y = 0; y < height; y++) {
+    setTile(ground, width, 0, y, 4);
+    setTile(collision, width, 0, y, 4);
+    setTile(ground, width, width - 1, y, 4);
+    setTile(collision, width, width - 1, y, 4);
+  }
+
+  // Water corners for visual framing.
+  fillRect(ground, width, 1, 1, 3, 2, 3);
+  fillRect(collision, width, 1, 1, 3, 2, 3);
+  fillRect(ground, width, width - 4, 1, 3, 2, 3);
+  fillRect(collision, width, width - 4, 1, 3, 2, 3);
+
+  // Main cross paths through the plaza.
+  fillRect(ground, width, 8, 4, 24, 3, 2);
+  fillRect(ground, width, 18, 6, 4, 18, 2);
+
+  // District gate placeholder on the right edge (wall tiles).
+  fillRect(ground, width, width - 3, 12, 2, 4, 6);
+  fillRect(collision, width, width - 3, 12, 2, 4, 6);
+
+  // Hub sign area near spawn.
+  fillRect(ground, width, 14, 10, 2, 2, 6);
+  fillRect(collision, width, 14, 10, 2, 2, 6);
+
+  // Building footprints only. Home icons and lock state come from pack.js / plotHomes.
+  const homePlots = [
+    { x: 10, y: 8, w: 2, h: 2 },
+    { x: 24, y: 8, w: 2, h: 2 },
+    { x: 10, y: 20, w: 2, h: 2 },
+    { x: 24, y: 20, w: 2, h: 2 },
+    { x: 17, y: 14, w: 2, h: 2 }
+  ];
+
+  for (let i = 0; i < homePlots.length; i++) {
+    const plot = homePlots[i];
+    fillRect(ground, width, plot.x, plot.y, plot.w, plot.h, 5);
+    fillRect(collision, width, plot.x, plot.y, plot.w, plot.h, 5);
+  }
+
+  return { ground: ground, collision: collision };
+}
+
+const MAP_WIDTH = 40;
+const MAP_HEIGHT = 30;
+const mainPlazaLayers = buildMainPlazaLayers(MAP_WIDTH, MAP_HEIGHT);
+
+const overworldMap = {
+  tileSize: TILE_SIZE,
+  width: MAP_WIDTH,
+  height: MAP_HEIGHT,
+  layers: mainPlazaLayers,
+  spawn: {
+    x: 18 * TILE_SIZE + 8,
+    y: 14 * TILE_SIZE + 8
+  },
+  signPosition: {
+    x: 14 * TILE_SIZE,
+    y: 10 * TILE_SIZE,
+    width: 64,
+    height: 64
+  }
+};
+
+function getTileColor(tileId) {
+  return TILE_COLORS[tileId] || "#222222";
+}
+
+function buildCollisionFromMap(map) {
+  const solids = [];
+  const layer = map.layers.collision;
+  const tileSize = map.tileSize;
+
+  for (let y = 0; y < map.height; y++) {
+    for (let x = 0; x < map.width; x++) {
+      const tileId = layer[y * map.width + x];
+      if (COLLISION_TILE_IDS.includes(tileId)) {
+        solids.push({
+          x: x * tileSize,
+          y: y * tileSize,
+          width: tileSize,
+          height: tileSize
+        });
+      }
+    }
+  }
+
+  return solids;
+}
+
+function drawTilemapLayer(ctx, map, camera) {
+  const camX = camera ? camera.x : 0;
+  const camY = camera ? camera.y : 0;
+  const layer = map.layers.ground;
+  const tileSize = map.tileSize;
+
+  for (let y = 0; y < map.height; y++) {
+    for (let x = 0; x < map.width; x++) {
+      const tileId = layer[y * map.width + x];
+      const color = getTileColor(tileId);
+      if (!color) {
+        continue;
+      }
+
+      ctx.fillStyle = color;
+      ctx.fillRect(
+        x * tileSize - camX,
+        y * tileSize - camY,
+        tileSize,
+        tileSize
+      );
+    }
+  }
+}
+
+</script>
+<script>
+// TEACHER-OWNED: colored doors on the overworld, unlocked by reward IDs from student platformers.
+const overworldDoors = [
+  {
+    id: "yellow_door",
+    name: "Yellow Door",
+    requires: "yellow_key",
+    dialogueKeyLocked: "doorLockedYellow",
+    x: 480,
+    y: 448,
+    width: 32,
+    height: 48
+  }
+];
+
+</script>
+<script>
+// TEACHER-OWNED: reward types students can earn from platformers (keys, skills).
+const rewardRegistry = {
+  yellow_key: { type: "key", color: "#f1c40f", label: "Yellow Key" },
+  blue_key: { type: "key", color: "#3498db", label: "Blue Key" },
+  red_key: { type: "key", color: "#e74c3c", label: "Red Key" },
+  double_jump: { type: "skill", label: "Double Jump" },
+  dash: { type: "skill", label: "Dash" },
+  bridge_token: { type: "key", color: "#27ae60", label: "Bridge Token" }
+};
+
+function getRewardLabel(rewardId) {
+  const r = rewardRegistry[rewardId];
+  return r ? r.label : rewardId;
+}
+
+</script>
+<script>
+// TEACHER-OWNED: shared demo levels only. Students put their level in their own pack.js (`level` block),
+// so nobody has to edit this file and two students can never overwrite each other's work.
+const platformerLevels = {};
+
+// Mode-neutral lookup. The old function below remains available for older code.
+function getStudentLevel(levelId) {
+  if (!levelId) {
+    return null;
+  }
+
+  if (platformerLevels[levelId]) {
+    return platformerLevels[levelId];
+  }
+
+  if (typeof studentManifests !== "undefined") {
+    for (let i = 0; i < studentManifests.length; i++) {
+      const level = studentManifests[i].level;
+      if (level && level.id === levelId) {
+        return level;
+      }
+    }
+  }
+
+  return null;
+}
+
+function getPlatformerLevel(levelId) {
+  return getStudentLevel(levelId);
+}
+
+</script>
+<script>
+// TEACHER-OWNED: student packs call registerStudentPack() from js/students/<id>/pack.js
+// A pack with errors is quarantined instead of loaded, so one broken world cannot take down the class.
+const studentManifests = [];
+const studentPackReports = [];
+
+function fillManifestDefaults(manifest) {
+  if (!manifest.name) {
+    manifest.name = manifest.id;
+  }
+  if (!manifest.author) {
+    manifest.author = "Unknown";
+  }
+  if (!manifest.iconColor) {
+    manifest.iconColor = "blue";
+  }
+  if (!(manifest.width > 0)) {
+    manifest.width = 32;
+  }
+  if (!(manifest.height > 0)) {
+    manifest.height = 32;
+  }
+  manifest.locked = !!manifest.locked;
+}
+
+// Pack-local levels get an id derived from the pack so two students can never collide.
+function fillLevelDefaults(pack) {
+  const manifest = pack.manifest;
+
+  if (pack.level) {
+    if (!pack.level.id) {
+      pack.level.id = manifest.id + "_level";
+    }
+    if (!pack.level.mode) {
+      pack.level.mode = "platformer";
+    }
+    if (!Array.isArray(pack.level.hazards)) {
+      pack.level.hazards = [];
+    }
+    // New packs use levelId; older packs may keep platformerLevelId.
+    // Preserve the old alias for Overworld registries and external classroom tools.
+    manifest.levelId = manifest.levelId || manifest.platformerLevelId || pack.level.id;
+    manifest.platformerLevelId = manifest.levelId;
+  }
+
+  if (manifest.platformerLevelId && !manifest.rewardId) {
+    manifest.rewardId = "key_" + manifest.id;
+  }
+  if (pack.level && !pack.level.rewardId) {
+    pack.level.rewardId = manifest.rewardId;
+  }
+}
+
+function logPackReport(report) {
+  if (report.status === "rejected") {
+    console.error(
+      "Student pack '" + report.id + "' was NOT loaded:\n  - " + report.errors.join("\n  - ")
+    );
+    return;
+  }
+  if (report.warnings.length > 0) {
+    console.warn(
+      "Student pack '" + report.id + "' loaded with warnings:\n  - " + report.warnings.join("\n  - ")
+    );
+  }
+}
+
+function registerStudentPack(pack) {
+  let report;
+
+  try {
+    report = validatePack(pack);
+  } catch (err) {
+    report = {
+      id: pack && pack.manifest ? pack.manifest.id : "(unknown)",
+      status: "rejected",
+      errors: ["pack could not be read: " + err.message],
+      warnings: []
+    };
+  }
+
+  if (report.status !== "rejected") {
+    const duplicate = studentManifests.some(function (existing) {
+      return existing.manifest.id === pack.manifest.id;
+    });
+    if (duplicate) {
+      report.status = "rejected";
+      report.errors.push("manifest.id '" + pack.manifest.id + "' is already registered by another pack");
+    }
+  }
+
+  if (report.status === "rejected") {
+    studentPackReports.push(report);
+    logPackReport(report);
+    return false;
+  }
+
+  try {
+    fillManifestDefaults(pack.manifest);
+    fillLevelDefaults(pack);
+  } catch (err) {
+    report.status = "rejected";
+    report.errors.push("pack defaults could not be applied: " + err.message);
+    studentPackReports.push(report);
+    logPackReport(report);
+    return false;
+  }
+
+  studentManifests.push(pack);
+  studentPackReports.push(report);
+  logPackReport(report);
+  return true;
+}
+
+function getStudentPack(packId) {
+  for (let i = 0; i < studentManifests.length; i++) {
+    if (studentManifests[i].manifest.id === packId) {
+      return studentManifests[i];
+    }
+  }
+  return null;
+}
+
+// Cross-pack problems (duplicate ids, overlapping icons) are folded into the reports at boot.
+function runPackRegistryChecks() {
+  const problems = validatePackRegistry(studentManifests);
+
+  for (let i = 0; i < problems.length; i++) {
+    const problem = problems[i];
+    let report = null;
+    for (let r = 0; r < studentPackReports.length; r++) {
+      if (studentPackReports[r].id === problem.id) {
+        report = studentPackReports[r];
+        break;
+      }
+    }
+    if (report) {
+      report.warnings.push(problem.message);
+    }
+    console.warn("Pack registry: " + problem.id + " — " + problem.message);
+  }
+
+  return problems;
+}
+
+function getPackReportSummary() {
+  let rejected = 0;
+  let warned = 0;
+
+  for (let i = 0; i < studentPackReports.length; i++) {
+    if (studentPackReports[i].status === "rejected") {
+      rejected += 1;
+    } else if (studentPackReports[i].warnings.length > 0) {
+      warned += 1;
+    }
+  }
+
+  return {
+    total: studentPackReports.length,
+    loaded: studentManifests.length,
+    rejected: rejected,
+    warned: warned
+  };
+}
+
+</script>
+<script src="pack.js"></script>
+<script>
+// TEACHER-OWNED: builds the overworld home list from student packs + locked plots.
+const HOME_ICON_COLORS = {
+  purple: "#9b59b6",
+  blue: "#3498db",
+  orange: "#e67e22",
+  gray: "#7f8c8d",
+  green: "#27ae60",
+  red: "#e74c3c",
+  yellow: "#f1c40f"
+};
+
+// Plot placeholders until students are approved and registered.
+const plotHomes = [
+  {
+    id: "locked_home",
+    name: "Locked Home",
+    author: "Future Student",
+    description: "Placeholder home for a future student submission.",
+    iconColor: "gray",
+    position: { x: 768, y: 256 },
+    width: 32,
+    height: 32,
+    locked: true
+  },
+  {
+    id: "plot_home_a",
+    name: "Home Plot A",
+    author: "Future Student",
+    description: "Reserved home plot.",
+    iconColor: "blue",
+    position: { x: 320, y: 640 },
+    width: 32,
+    height: 32,
+    locked: true
+  },
+  {
+    id: "plot_home_b",
+    name: "Home Plot B",
+    author: "Future Student",
+    description: "Reserved home plot.",
+    iconColor: "orange",
+    position: { x: 768, y: 640 },
+    width: 32,
+    height: 32,
+    locked: true
+  },
+  {
+    id: "plot_home_c",
+    name: "Home Plot C",
+    author: "Future Student",
+    description: "Reserved home plot.",
+    iconColor: "green",
+    position: { x: 544, y: 448 },
+    width: 32,
+    height: 32,
+    locked: true
+  }
+];
+
+// Every pack that ships a level gets its own key, so the six hand-written rewards
+// below do not have to stretch across a full class roster.
+function ensurePackRewards() {
+  for (let i = 0; i < studentManifests.length; i++) {
+    const m = studentManifests[i].manifest;
+    if (!m.rewardId || rewardRegistry[m.rewardId]) {
+      continue;
+    }
+    rewardRegistry[m.rewardId] = {
+      type: "key",
+      color: HOME_ICON_COLORS[m.iconColor] || "#ffffff",
+      label: m.name + " Key"
+    };
+  }
+}
+
+function buildHomeRegistryFromManifests() {
+  const registry = [];
+
+  for (let i = 0; i < studentManifests.length; i++) {
+    const m = studentManifests[i].manifest;
+    if (!m.position) {
+      continue;
+    }
+    registry.push({
+      id: m.id,
+      name: m.name,
+      author: m.author,
+      description: m.description,
+      iconColor: m.iconColor,
+      position: m.position,
+      width: m.width || 32,
+      height: m.height || 32,
+      homeScene: "home_" + m.id,
+      locked: !!m.locked,
+      platformerLevelId: m.platformerLevelId,
+      rewardId: m.rewardId
+    });
+  }
+
+  for (let j = 0; j < plotHomes.length; j++) {
+    const plot = plotHomes[j];
+    const already = registry.some(function (h) { return h.id === plot.id; });
+    if (!already) {
+      registry.push({
+        ...plot,
+        homeScene: null,
+        locked: true
+      });
+    }
+  }
+
+  return registry;
+}
+
+let homeRegistry = [];
+
+function refreshHomeRegistry() {
+  ensurePackRewards();
+  homeRegistry = buildHomeRegistryFromManifests();
+}
+
+refreshHomeRegistry();
+
+function validateHomeRegistry(registry) {
+  const seenIds = {};
+  for (let i = 0; i < registry.length; i++) {
+    const home = registry[i];
+    const label = "Home registry entry " + i;
+    if (!home.id) {
+      console.warn(label + ": missing id");
+      continue;
+    }
+    if (seenIds[home.id]) {
+      console.warn(label + ": duplicate id '" + home.id + "'");
+    }
+    seenIds[home.id] = true;
+    if (!home.name) console.warn(label + " (" + home.id + "): missing name");
+    if (!home.locked && !home.homeScene) {
+      console.warn(label + " (" + home.id + "): missing homeScene");
+    }
+    if (!home.position) console.warn(label + " (" + home.id + "): missing position");
+    if (!home.width || !home.height || home.width <= 0 || home.height <= 0) {
+      console.warn(label + " (" + home.id + "): invalid dimensions");
+    }
+  }
+}
+
+function drawHomeIcons(ctx, registry, camera) {
+  const camX = camera ? camera.x : 0;
+  const camY = camera ? camera.y : 0;
+
+  for (let i = 0; i < registry.length; i++) {
+    const home = registry[i];
+    if (!home.position) {
+      continue;
+    }
+    const color = HOME_ICON_COLORS[home.iconColor] || "#ffffff";
+    ctx.fillStyle = color;
+    ctx.fillRect(
+      home.position.x - camX,
+      home.position.y - camY,
+      home.width,
+      home.height
+    );
+    if (home.locked) {
+      ctx.fillStyle = "rgba(0, 0, 0, 0.45)";
+      ctx.fillRect(
+        home.position.x - camX,
+        home.position.y - camY,
+        home.width,
+        home.height
+      );
+    }
+    if (typeof isHomeVisited === "function" && isHomeVisited(home.id)) {
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "12px monospace";
+      ctx.fillText("*", home.position.x - camX + 4, home.position.y - camY + 14);
+    }
+  }
+}
+
+function buildHomeInteractables(registry) {
+  const interactables = [];
+
+  for (let i = 0; i < registry.length; i++) {
+    const home = registry[i];
+    if (!home.position) {
+      continue;
+    }
+    interactables.push({
+      type: INTERACTABLE_TYPES.HOME_ENTRANCE,
+      id: home.id,
+      name: home.name,
+      homeScene: home.homeScene,
+      locked: !!home.locked,
+      x: home.position.x,
+      y: home.position.y,
+      width: home.width,
+      height: home.height
+    });
+  }
+
+  interactables.push({
+    type: INTERACTABLE_TYPES.SIGN,
+    id: "hub_sign",
+    name: "Class Hub Sign",
+    dialogueKey: "hubSign",
+    x: overworldMap.signPosition.x,
+    y: overworldMap.signPosition.y,
+    width: overworldMap.signPosition.width,
+    height: overworldMap.signPosition.height
+  });
+
+  if (typeof overworldDoors !== "undefined") {
+    for (let d = 0; d < overworldDoors.length; d++) {
+      const door = overworldDoors[d];
+      interactables.push({
+        type: INTERACTABLE_TYPES.COLORED_DOOR,
+        id: door.id,
+        name: door.name,
+        requires: door.requires,
+        dialogueKeyLocked: door.dialogueKeyLocked || "doorLocked",
+        x: door.x,
+        y: door.y,
+        width: door.width,
+        height: door.height
+      });
+    }
+  }
+
+  return interactables;
+}
+
+</script>
+<script>
+// TEACHER-OWNED: shared dialogue used by the overworld (signs, doors, engine fallbacks).
+// Students write their own lines in the `dialogue` block of their pack.js, not in this file.
+const dialogueData = {
+  hubSign: {
+    speaker: "Sign",
+    lines: [
+      "Welcome to the Class Multiverse Hub.",
+      "Visit student homes to explore their worlds.",
+      "More districts will open in future versions."
+    ]
+  },
+
+  portalNotReady: {
+    speaker: "Portal",
+    lines: [
+      "This portal has no platformer level assigned yet.",
+      "Add a `level` block to your pack.js."
+    ]
+  },
+
+  lockedHome: {
+    speaker: "Notice",
+    lines: [
+      "This home is locked for now.",
+      "A student submission will unlock it in a future version."
+    ]
+  },
+
+  doorLocked: {
+    speaker: "Door",
+    lines: ["This door is locked.", "Complete a student platformer to earn the right key."]
+  },
+
+  doorLockedYellow: {
+    speaker: "Yellow Door",
+    lines: ["You need the Yellow Key.", "Beat the Sample Studio platformer to earn it."]
+  },
+
+  doorUnlocked: {
+    speaker: "Door",
+    lines: ["You have the key!", "This passage is open for future district expansion."]
+  }
+};
+
+// Pack dialogue wins over the shared table, so student keys can never collide across the class.
+function getDialogueEntry(dialogueKey, pack) {
+  if (!dialogueKey) {
+    return null;
+  }
+  if (pack && pack.dialogue && pack.dialogue[dialogueKey]) {
+    return pack.dialogue[dialogueKey];
+  }
+  return dialogueData[dialogueKey] || null;
+}
+
+</script>
+<script>
+// TEACHER-OWNED: player movement (top-down on the hub/home, side-view in platformers).
+class Player {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.width = 28;
+    this.height = 28;
+    this.speed = 2.5;
+    this.facing = "down";
+    this.state = "idle";
+    this.vx = 0;
+    this.vy = 0;
+    this.onGround = false;
+    this.jumpCount = 0;
+  }
+
+  updatePlatformer(level) {
+    const moveSpeed = 4;
+    const jumpForce = -11;
+    const gravity = 0.55;
+    const maxFall = 14;
+    const solids = level.solids || [];
+    const hazards = level.hazards || [];
+
+    this.vx = 0;
+    if (isMoveLeft()) {
+      this.vx = -moveSpeed;
+      this.facing = "left";
+    } else if (isMoveRight()) {
+      this.vx = moveSpeed;
+      this.facing = "right";
+    }
+
+    this.onGround = isOnGround(this, solids);
+    const canDoubleJump = typeof hasReward === "function" && hasReward("double_jump");
+
+    if (input.isPressed("Space") || input.isPressed("ArrowUp") || input.isPressed("KeyW")) {
+      if (this.onGround) {
+        this.vy = jumpForce;
+        this.jumpCount = 1;
+      } else if (canDoubleJump && this.jumpCount < 2) {
+        this.vy = jumpForce;
+        this.jumpCount = 2;
+      }
+    }
+
+    applyGravity(this, gravity, maxFall);
+    moveWithCollision(this, this.vx, 0, solids);
+    moveWithCollision(this, 0, this.vy, solids);
+    this.onGround = isOnGround(this, solids);
+    if (this.onGround && this.vy > 0) {
+      this.vy = 0;
+    }
+
+    for (let i = 0; i < hazards.length; i++) {
+      if (isColliding(this, hazards[i])) {
+        // Tell the scene to reset the WHOLE attempt, including collected keys.
+        return true;
+      }
+    }
+
+    this.state = this.vx !== 0 || this.vy !== 0 ? "walk" : "idle";
+    // Falling out of a level is a failure, not an endless fall.
+    return this.y > (level.height || 640) || this.x + this.width < 0 || this.x > (level.width || 960);
+  }
+
+  updateTopDown(collisionObjects, movementBlocked) {
+    if (movementBlocked) {
+      this.state = "idle";
+      return;
+    }
+
+    let dx = 0;
+    let dy = 0;
+
+    // Vertical input wins so the player cannot move diagonally in Version 1.
+    if (isMoveUp()) {
+      dy = -this.speed;
+      this.facing = "up";
+    } else if (isMoveDown()) {
+      dy = this.speed;
+      this.facing = "down";
+    } else if (isMoveLeft()) {
+      dx = -this.speed;
+      this.facing = "left";
+    } else if (isMoveRight()) {
+      dx = this.speed;
+      this.facing = "right";
+    }
+
+    if (dx !== 0 || dy !== 0) {
+      this.state = "walk";
+      moveWithCollision(this, dx, dy, collisionObjects);
+    } else {
+      this.state = "idle";
+    }
+  }
+
+  draw(ctx, camera) {
+    const camX = camera ? camera.x : 0;
+    const camY = camera ? camera.y : 0;
+    const screenX = this.x - camX;
+    const screenY = this.y - camY;
+
+    ctx.fillStyle = "#3a7bd5";
+    ctx.fillRect(screenX, screenY, this.width, this.height);
+
+    ctx.fillStyle = "#cce5ff";
+    const indicatorSize = 8;
+    let indicatorX = screenX + (this.width - indicatorSize) / 2;
+    let indicatorY = screenY + (this.height - indicatorSize) / 2;
+
+    if (this.facing === "up") {
+      indicatorY = screenY;
+    } else if (this.facing === "down") {
+      indicatorY = screenY + this.height - indicatorSize;
+    } else if (this.facing === "left") {
+      indicatorX = screenX;
+    } else if (this.facing === "right") {
+      indicatorX = screenX + this.width - indicatorSize;
+    }
+
+    ctx.fillRect(indicatorX, indicatorY, indicatorSize, indicatorSize);
+  }
+}
+
+</script>
+<script>
+// TEACHER-OWNED: objects the player can press E on (homes, NPCs, portals, etc.).
+const INTERACTABLE_TYPES = {
+  HOME_ENTRANCE: "homeEntrance",
+  SIGN: "sign",
+  NPC: "npc",
+  PORTAL: "portal",
+  EXIT: "exit",
+  SAVE_POINT: "savePoint",
+  SUBMIT_POINT: "submitPoint",
+  COLORED_DOOR: "coloredDoor"
+};
+
+function getInteractionBox(player) {
+  return {
+    x: player.x - 4,
+    y: player.y - 4,
+    width: player.width + 8,
+    height: player.height + 8
+  };
+}
+
+function findClosestInteractable(player, interactables) {
+  const box = getInteractionBox(player);
+  let closest = null;
+  let closestDistance = Infinity;
+
+  for (let i = 0; i < interactables.length; i++) {
+    const item = interactables[i];
+    if (isColliding(box, item)) {
+      const centerX = item.x + item.width / 2;
+      const centerY = item.y + item.height / 2;
+      const playerCenterX = player.x + player.width / 2;
+      const playerCenterY = player.y + player.height / 2;
+      const distance =
+        Math.abs(centerX - playerCenterX) + Math.abs(centerY - playerCenterY);
+
+      if (distance < closestDistance) {
+        closestDistance = distance;
+        closest = item;
+      }
+    }
+  }
+
+  return closest;
+}
+
+</script>
+<script>
+// TEACHER-OWNED: only one scene is active at a time (title, overworld, home, platformer).
+// A scene that throws is quarantined instead of freezing the game for everyone else.
+const sceneErrorInfo = {
+  sceneName: "",
+  message: ""
+};
+
+function describeSceneError(err) {
+  if (!err) {
+    return "Unknown error";
+  }
+  return err.message ? err.message : String(err);
+}
+
+const sceneErrorScene = {
+  name: "__sceneError",
+
+  create() {},
+
+  update() {
+    if (input.isPressed("Enter") || input.isPressed("Escape")) {
+      sceneManager.changeSceneImmediate(sceneManager.fallbackSceneName());
+    }
+  },
+
+  draw(ctx) {
+    ctx.fillStyle = "#0d0d1a";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.fillStyle = "#e74c3c";
+    ctx.font = "24px monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("This world is under construction", canvas.width / 2, 200);
+
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "15px monospace";
+    ctx.fillText(sceneErrorInfo.sceneName, canvas.width / 2, 250);
+    ctx.fillText(sceneErrorInfo.message.slice(0, 70), canvas.width / 2, 290);
+    ctx.fillText("Press F3 for the pack report, F12 for the console.", canvas.width / 2, 350);
+    ctx.fillText("Press Enter to go back.", canvas.width / 2, 390);
+  },
+
+  exit() {}
+};
+
+const sceneManager = {
+  scenes: {},
+  currentScene: null,
+  brokenScenes: {},
+
+  register(scene) {
+    this.scenes[scene.name] = scene;
+  },
+
+  changeScene(sceneName) {
+    if (transition.active) {
+      return;
+    }
+    startTransition(sceneName);
+  },
+
+  fallbackSceneName() {
+    if (!this.brokenScenes.overworld && this.scenes.overworld) {
+      return "overworld";
+    }
+    return "title";
+  },
+
+  quarantine(sceneName, err) {
+    const message = describeSceneError(err);
+    console.error("Scene '" + sceneName + "' was disabled after an error:", err);
+    this.brokenScenes[sceneName] = message;
+    this.showSceneError(sceneName, message);
+  },
+
+  showSceneError(sceneName, message) {
+    sceneErrorInfo.sceneName = sceneName;
+    sceneErrorInfo.message = message;
+    this.currentScene = sceneErrorScene;
+    gameState.currentScene = sceneErrorScene.name;
+  },
+
+  changeSceneImmediate(sceneName) {
+    const nextScene = this.scenes[sceneName];
+    if (!nextScene) {
+      console.warn("Scene not found:", sceneName);
+      return;
+    }
+
+    if (this.brokenScenes[sceneName]) {
+      this.showSceneError(sceneName, this.brokenScenes[sceneName]);
+      return;
+    }
+
+    if (this.currentScene && this.currentScene.exit) {
+      try {
+        this.currentScene.exit();
+      } catch (err) {
+        console.warn("Scene '" + this.currentScene.name + "' failed to exit cleanly:", err);
+      }
+    }
+
+    this.currentScene = nextScene;
+    gameState.currentScene = sceneName;
+
+    if (nextScene.create) {
+      try {
+        nextScene.create();
+      } catch (err) {
+        this.quarantine(sceneName, err);
+      }
+    }
+  },
+
+  update(deltaTime) {
+    if (!this.currentScene || !this.currentScene.update) {
+      return;
+    }
+    try {
+      this.currentScene.update(deltaTime);
+    } catch (err) {
+      this.handleActiveSceneError(err);
+    }
+  },
+
+  draw(ctx) {
+    if (!this.currentScene || !this.currentScene.draw) {
+      return;
+    }
+    try {
+      this.currentScene.draw(ctx);
+    } catch (err) {
+      this.handleActiveSceneError(err);
+    }
+  },
+
+  handleActiveSceneError(err) {
+    if (this.currentScene === sceneErrorScene) {
+      console.error("Error screen failed:", err);
+      return;
+    }
+    this.quarantine(this.currentScene.name, err);
+  }
+};
+
+</script>
+<script>
+// TEACHER-OWNED: shared game scene for platformer, adventure, arena and sports levels.
+// Each call creates independent attempt state. All modes share objective/reward rules.
+// Students customize pack.js; they do not need to copy or change these engine functions.
+function createStudentGameScene(mode) {
+return {
+  name: mode,
+  level: null,
+  player: null,
+  pendingLevelId: null,
+  pendingRewardId: null,
+  returnScene: "overworld",
+  completed: false,
+  progress: null,
+  combat: null,
+  challenge: null,
+  basketball: null,
+  soccer: null,
+  football: null,
+  ranch: null,
+  shooter: null,
+  pursuit: null,
+
+  create() {
+    const levelId = this.pendingLevelId;
+    this.level = getStudentLevel(levelId);
+    if (!this.level || (this.level.mode || "platformer") !== mode) {
+      console.warn("Missing level or wrong game mode:", levelId);
+      sceneManager.changeSceneImmediate("overworld");
+      return;
+    }
+    this.progress = createLevelProgress();
+    this.shooter = this.level.shooter ? createShooter(this.level) : null;
+    this.pursuit = this.level.pursuit ? createPursuit(this.level) : null;
+    this.combat = this.level.combat ? createArenaCombat(this.level) : null;
+    this.challenge = mode === "sports" ? createSkillChallenge(this.level) : null;
+    this.basketball = mode === "basketball" ? createBasketball(this.level) : null;
+    this.soccer = mode === "soccer" ? createSoccer(this.level) : null;
+    this.football = mode === "football" ? createFootball(this.level) : null;
+    this.ranch = mode === "ranch" ? createRanch(this.level) : null;
+    this.player = new Player(this.level.spawn.x, this.level.spawn.y);
+    if(this.shooter || (this.combat && mode === "platformer")) this.player.facing="right";
+    this.player.vx = 0;
+    this.player.vy = 0;
+    this.player.onGround = false;
+    this.player.jumpCount = 0;
+    this.completed = false;
+    gameState.currentScene = mode;
+    if (typeof logEvent === "function") {
+      logEvent("started_" + mode, levelId, { mode: mode });
+    }
+  },
+
+  update(deltaTime) {
+    if (isTransitionBlockingInput()) return;
+    if (input.isPressed("Escape")) {
+      sceneManager.changeScene(this.returnScene || "overworld");
+      return;
+    }
+    if (input.isPressed("KeyR")) {
+      this.restartAttempt();
+      return;
+    }
+    // Reading a clue/NPC pauses this attempt, including enemies and countdowns.
+    // E/Enter closes the message; that press never triggers a second interaction.
+    if(this.progress.dialogue){
+      if(input.isPressed("KeyE") || input.isPressed("Enter"))this.progress.dialogue=null;
+      return;
+    }
+    if(this.ranch){
+      const seconds=Number.isFinite(deltaTime)?Math.max(0,Math.min(deltaTime/1000,0.05)):1/60;
+      if(this.ranch.won&&input.isPressed("Enter")){this.completeLevel();return;}
+      updateRanch(this.level,this.ranch,seconds,{
+        up:input.isDown("ArrowUp")||input.isDown("KeyW"),down:input.isDown("ArrowDown")||input.isDown("KeyS"),
+        left:input.isDown("ArrowLeft")||input.isDown("KeyA"),right:input.isDown("ArrowRight")||input.isDown("KeyD"),
+        start:input.isPressed("Enter"),catch:input.isPressed("Space")
+      });
+      return;
+    }
+    if(this.football){
+      const seconds=Number.isFinite(deltaTime)?Math.max(0,Math.min(deltaTime/1000,0.05)):1/60;
+      // Confirm an existing win before updating; starting a play never also confirms its result.
+      if(this.football.won&&input.isPressed("Enter")){this.completeLevel();return;}
+      updateFootball(this.level,this.football,seconds,{
+        up:input.isDown("ArrowUp")||input.isDown("KeyW"),down:input.isDown("ArrowDown")||input.isDown("KeyS"),
+        left:input.isDown("ArrowLeft")||input.isDown("KeyA"),right:input.isDown("ArrowRight")||input.isDown("KeyD"),
+        sprint:input.isDown("Space"),start:input.isPressed("Enter")
+      });
+      return;
+    }
+    if(this.soccer){
+      const seconds=Number.isFinite(deltaTime)?Math.max(0,Math.min(deltaTime/1000,0.05)):1/60;
+      updateSoccer(this.level,this.soccer,seconds,{
+        up:input.isDown("ArrowUp")||input.isDown("KeyW"),down:input.isDown("ArrowDown")||input.isDown("KeyS"),
+        left:input.isDown("ArrowLeft")||input.isDown("KeyA"),right:input.isDown("ArrowRight")||input.isDown("KeyD"),
+        aimUp:input.isDown("KeyI"),aimDown:input.isDown("KeyK"),weaker:input.isDown("KeyJ"),stronger:input.isDown("KeyL"),kick:input.isPressed("Space")
+      });
+      if(this.soccer.won&&input.isPressed("Enter"))this.completeLevel();
+      return;
+    }
+    if(this.basketball){
+      const seconds=Number.isFinite(deltaTime)?Math.max(0,Math.min(deltaTime/1000,0.05)):1/60;
+      updateBasketball(this.level,this.basketball,seconds,{
+        up:input.isDown("ArrowUp")||input.isDown("KeyW"),down:input.isDown("ArrowDown")||input.isDown("KeyS"),
+        left:input.isDown("ArrowLeft")||input.isDown("KeyA"),right:input.isDown("ArrowRight")||input.isDown("KeyD"),
+        call:input.isPressed("KeyE"),pass1:input.isPressed("Digit1"),pass2:input.isPressed("Digit2"),
+        shoot:input.isPressed("Space")||input.pointerPressed,roster:input.isPressed("Tab")
+      });
+      if(this.basketball.won&&input.isPressed("Enter"))this.completeLevel();
+      return;
+    }
+    if (this.challenge) {
+      const seconds = Number.isFinite(deltaTime) ? Math.max(0,Math.min(deltaTime/1000,0.05)) : 1/60;
+      updateSkillChallenge(this.level,this.challenge,seconds,{
+        up:input.isPressed("ArrowUp") || input.isPressed("KeyW"),
+        down:input.isPressed("ArrowDown") || input.isPressed("KeyS"),
+        left:input.isPressed("ArrowLeft") || input.isPressed("KeyA"),
+        right:input.isPressed("ArrowRight") || input.isPressed("KeyD"),
+        shoot:input.isPressed("Space")
+      });
+      // Show the final score until Enter confirms the win. Esc never awards a result.
+      if (this.challenge.won && input.isPressed("Enter")) this.completeLevel();
+      return;
+    }
+    // A defeated player can only restart or leave. No movement or reward can slip through.
+    if ((this.combat && this.combat.defeated) || (this.shooter && this.shooter.defeated) || (this.pursuit && this.pursuit.defeated)) return;
+    // Closed doors participate in the same collision system as platforms.
+    // Make a temporary level view; never mutate the student's saved design.
+    const movementLevel = Object.assign({}, this.level, {
+      solids: (this.level.solids || []).concat(getClosedLevelDoors(this.level, this.progress))
+    });
+    const hiding = this.pursuit && pursuitHidden(this.level,this.player,input.isDown("KeyH"));
+    if (!hiding && this.updateMovement(movementLevel)) {
+      this.restartAttempt();
+      return;
+    }
+    if (this.combat) {
+      // Combat timers use seconds; cap long frame gaps so returning to a tab is safe.
+      const seconds = Number.isFinite(deltaTime) ? Math.max(0, Math.min(deltaTime / 1000, 0.05)) : 1 / 60;
+      updateArenaCombat(this.level, this.combat, this.player, movementLevel.solids, seconds,
+        input.isPressed("KeyJ") || (mode !== "platformer" && input.isPressed("Space")));
+      if (this.combat.defeated) return;
+    }
+    if(this.shooter){
+      const seconds=Number.isFinite(deltaTime)?Math.max(0,Math.min(deltaTime/1000,0.05)):1/60;
+      updateShooter(this.level,this.shooter,this.player,movementLevel.solids,seconds,{
+        fire:input.isDown("KeyF"),aimUp:input.isDown("KeyI"),aimLeft:input.isDown("KeyJ"),
+        aimDown:input.isDown("KeyK"),aimRight:input.isDown("KeyL")
+      });
+      if(this.shooter.defeated)return;
+    }
+    if(this.pursuit){
+      const seconds=Number.isFinite(deltaTime)?Math.max(0,Math.min(deltaTime/1000,0.05)):1/60;
+      updatePursuit(this.level,this.pursuit,this.player,movementLevel.solids,seconds,{hide:input.isDown("KeyH"),stun:input.isPressed("KeyQ")});
+      if(this.pursuit.defeated)return;
+    }
+    collectLevelItems(this.level, this.progress, this.player);
+    if(this.level.interactions && input.isPressed("KeyE")){
+      const target = nearestQuestInteraction(this.level,this.progress,this.player);
+      if(target){activateQuestInteraction(this.level,this.progress,target);return;}
+    }
+    const goal = this.level.goal;
+    if (
+      !this.completed && (!this.combat || this.combat.cleared) && (!this.shooter || this.shooter.cleared) &&
+      areLevelRequirementsMet(this.level, this.progress, goal.requires) &&
+      isColliding(this.player, goal)
+    ) {
+      this.completeLevel();
+    }
+  },
+
+  // Shared by every mode: one completion record, one reward, then the owning home.
+  completeLevel() {
+    if (this.completed) return;
+    this.completed = true;
+    const firstClear = !isLevelCompleted(this.level.id);
+    markLevelCompleted(this.level.id);
+    const rewardId = this.pendingRewardId || this.level.rewardId;
+    if (rewardId) {
+      unlockReward(rewardId);
+    }
+    if (firstClear) {
+      awardLevelCoins();
+    }
+    if (typeof logEvent === "function") {
+      logEvent("completed_level", this.level.id, { rewardId: rewardId, coins: firstClear ? LEVEL_COMPLETE_COINS : 0 });
+    }
+    saveGameProgress();
+    sceneManager.changeScene(this.returnScene || "overworld");
+  },
+
+  // Only movement differs. A top-down player walks in four directions without gravity.
+  updateMovement(level) {
+    if (mode === "platformer") return this.player.updatePlatformer(level);
+    this.player.updateTopDown(level.solids, false);
+    // The first template is one screen. Bounds remain solid even without border tiles.
+    this.player.x = Math.max(0, Math.min(level.width - this.player.width, this.player.x));
+    this.player.y = Math.max(0, Math.min(level.height - this.player.height, this.player.y));
+    return (level.hazards || []).some(hazard => isColliding(this.player, hazard));
+  },
+
+  // R, hazards and falling all restart temporary progress. Saved rewards stay saved.
+  restartAttempt() {
+    this.progress = createLevelProgress();
+    this.shooter = this.level.shooter ? createShooter(this.level) : null;
+    this.pursuit = this.level.pursuit ? createPursuit(this.level) : null;
+    this.combat = this.level.combat ? createArenaCombat(this.level) : null;
+    this.challenge = mode === "sports" ? createSkillChallenge(this.level) : null;
+    this.basketball = mode === "basketball" ? createBasketball(this.level) : null;
+    this.soccer = mode === "soccer" ? createSoccer(this.level) : null;
+    this.football = mode === "football" ? createFootball(this.level) : null;
+    this.ranch = mode === "ranch" ? createRanch(this.level) : null;
+    this.player = new Player(this.level.spawn.x, this.level.spawn.y);
+    if(this.shooter || (this.combat && mode === "platformer")) this.player.facing="right";
+    this.completed = false;
+  },
+
+  draw(ctx) {
+    if(this.ranch){drawRanch(ctx,this.level,this.ranch);return;}
+    if(this.football){drawFootball(ctx,this.level,this.football);return;}
+    if(this.soccer){drawSoccer(ctx,this.level,this.soccer);return;}
+    if(this.basketball){drawBasketball(ctx,this.level,this.basketball);return;}
+    if (this.challenge) {
+      drawSkillChallenge(ctx,this.level,this.challenge);
+      drawDebugOverlay(ctx,{sceneName:this.name,playerX:this.level.spawn.x,playerY:this.level.spawn.y,cameraX:0,cameraY:0,collisionCount:0,homeCount:homeRegistry.length});
+      return;
+    }
+    ctx.fillStyle = "#1a1a2e";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    const solids = this.level.solids || [];
+    ctx.fillStyle = "#5d4e37";
+    for (let i = 0; i < solids.length; i++) {
+      const s = solids[i];
+      ctx.fillRect(s.x, s.y, s.width, s.height);
+    }
+
+    const hazards = this.level.hazards || [];
+    ctx.fillStyle = "#c0392b";
+    for (let h = 0; h < hazards.length; h++) {
+      const hz = hazards[h];
+      ctx.fillRect(hz.x, hz.y, hz.width, hz.height);
+    }
+
+    // Items disappear after pickup; open doors are outlines instead of solid walls.
+    ctx.save();
+    ctx.font = "13px monospace";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "bottom";
+    for (const item of this.level.collectibles || []) {
+      if (!this.progress.collected.has(item.id) && (!item.revealBy || this.progress.interacted.has(item.revealBy))) {
+        ctx.fillStyle = "#5eead4";
+        ctx.fillRect(item.x, item.y, item.width, item.height);
+        ctx.fillStyle = "white";
+        ctx.fillText(item.label || item.id, item.x, item.y - 3);
+      }
+    }
+    for (const door of this.level.doors || []) {
+      const open = areLevelRequirementsMet(this.level, this.progress, door.requires);
+      ctx.fillStyle = "#a78bfa";
+      ctx.strokeStyle = "#a78bfa";
+      if (open) ctx.strokeRect(door.x, door.y, door.width, door.height);
+      else ctx.fillRect(door.x, door.y, door.width, door.height);
+      ctx.fillStyle = "white";
+      ctx.fillText((door.label || door.id) + (open ? " (open)" : " (locked)"), door.x, door.y - 3);
+    }
+    ctx.restore();
+    const goalOpen = (!this.combat || this.combat.cleared) && (!this.shooter || this.shooter.cleared) && areLevelRequirementsMet(this.level, this.progress, this.level.goal.requires);
+    ctx.fillStyle = goalOpen ? "#f39c12" : "#64748b";
+    ctx.fillRect(
+      this.level.goal.x,
+      this.level.goal.y,
+      this.level.goal.width,
+      this.level.goal.height
+    );
+
+    // The light marker shows which direction the character faces.
+    this.player.draw(ctx);
+
+    drawLevelObjectives(ctx, this.level, this.progress);
+    if (this.combat) drawArenaCombat(ctx, this.level, this.combat, this.player);
+    if(this.shooter)drawShooter(ctx,this.level,this.shooter,this.player);
+    if(this.pursuit)drawPursuit(ctx,this.level,this.pursuit,this.player);
+    drawInteractionPrompt(ctx, ((this.combat && this.combat.defeated) || (this.shooter && this.shooter.defeated) || (this.pursuit && this.pursuit.defeated) ? "Defeated" : goalOpen ? "Reach the exit" : this.shooter ? "Clear targets and tasks" : this.combat ? "Clear enemies and tasks" : "Complete tasks") + " | R: restart | Esc: home");
+
+    if(this.level.interactions)drawQuestInteractions(ctx,this.level,this.progress,this.player);
+    drawDebugOverlay(ctx, {
+      sceneName: this.name,
+      playerX: this.player.x,
+      playerY: this.player.y,
+      cameraX: 0,
+      cameraY: 0,
+      collisionCount: solids.length,
+      homeCount: homeRegistry.length
+    });
+  },
+
+  exit() {
+    this.pendingLevelId = null;
+    this.pendingRewardId = null;
+    this.progress = null;
+    this.combat = null;
+    this.challenge = null;
+    this.basketball = null;
+    this.soccer = null;
+    this.football = null;
+    this.ranch = null;
+    this.shooter = null;
+    this.pursuit = null;
+  }
+};
+
+}
+
+</script>
+<script>
+// TEACHER-OWNED: keep the original scene name for existing student packs.
+// The shared scene uses gravity and jumping when its mode is "platformer".
+const platformerScene = createStudentGameScene("platformer");
+
+</script>
+<script>
+// TEACHER-OWNED: the same objectives, doors, rewards and restart rules,
+// with four-direction walking instead of platformer gravity and jumping.
+const topdownScene = createStudentGameScene("topdown");
+
+</script>
+<script>
+// TEACHER-OWNED: walking plus combat, with the same return/reward rules as other modes.
+const arenaScene = createStudentGameScene("arena");
+
+</script>
+<script>
+// TEACHER-OWNED: shooting challenge with the shared completion, save and home-return rules.
+const sportsScene = createStudentGameScene("sports");
+
+</script>
+<script>
+// TEACHER-OWNED: bird's-eye team basketball, separate from the free-throw activity.
+const basketballScene=createStudentGameScene("basketball");
+
+</script>
+<script>
+// The shared scene handles retry, home routing and once-only saved rewards.
+const soccerScene = createStudentGameScene("soccer");
+
+</script>
+<script>
+// The shared scene handles retries, saved rewards, and returning to this student's home.
+const footballScene = createStudentGameScene("football");
+
+</script>
+<script>
+// Use the shared scene for home routing, retry, saved rewards and clean re-entry.
+const ranchScene = createStudentGameScene("ranch");
+
+</script>
+<script>
+// TEACHER-OWNED: turns a student pack (js/students/<id>/pack.js) into a playable home.
+// Students should not edit this file — copy the sample pack instead.
+function clampSpawnTile(value, fallback, max) {
+  if (typeof value !== "number" || !isFinite(value)) {
+    return fallback;
+  }
+  return Math.min(Math.max(1, Math.round(value)), max);
+}
+
+function buildRoomFromConfig(homeConfig) {
+  const config = homeConfig || {};
+  const tileSize = config.tileSize > 0 ? config.tileSize : 32;
+  const width = Math.max(5, config.width > 0 ? config.width : 20);
+  const height = Math.max(5, config.height > 0 ? config.height : 12);
+  const ground = [];
+  const collision = [];
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const isBorder = x === 0 || y === 0 || x === width - 1 || y === height - 1;
+      ground.push(isBorder ? 6 : 2);
+      collision.push(isBorder ? 6 : 0);
+    }
+  }
+
+  const spawnTile = config.spawnTile || {};
+  const spawnX = clampSpawnTile(spawnTile.x, Math.floor(width / 2), width - 2);
+  const spawnY = clampSpawnTile(spawnTile.y, Math.floor(height / 2), height - 2);
+
+  return {
+    tileSize: tileSize,
+    width: width,
+    height: height,
+    pixelWidth: width * tileSize,
+    pixelHeight: height * tileSize,
+    layers: { ground: ground, collision: collision },
+    spawn: {
+      x: spawnX * tileSize + 2,
+      y: spawnY * tileSize + 2
+    }
+  };
+}
+
+function buildInteractablesFromConfig(homeConfig, manifest) {
+  const config = homeConfig || {};
+  const tileSize = config.tileSize > 0 ? config.tileSize : 32;
+  const source = Array.isArray(config.interactables) ? config.interactables : [];
+  const list = [];
+
+  for (let i = 0; i < source.length; i++) {
+    const item = source[i];
+    if (!item || typeof item.tileX !== "number" || typeof item.tileY !== "number") {
+      continue;
+    }
+
+    const base = {
+      id: item.id || manifest.id + "_item_" + i,
+      name: item.name || item.type,
+      x: item.tileX * tileSize,
+      y: item.tileY * tileSize,
+      width: item.width > 0 ? item.width : 32,
+      height: item.height > 0 ? item.height : 32
+    };
+
+    if (item.type === "npc") {
+      list.push({
+        type: INTERACTABLE_TYPES.NPC,
+        dialogueKey: item.dialogueKey,
+        worldId: manifest.id,
+        ...base
+      });
+    } else if (item.type === "portal") {
+      list.push({
+        type: INTERACTABLE_TYPES.PORTAL,
+        levelId: item.levelId || item.platformerLevelId || manifest.levelId || manifest.platformerLevelId,
+        rewardId: manifest.rewardId,
+        worldId: manifest.id,
+        ...base
+      });
+    } else if (item.type === "exit") {
+      list.push({
+        type: INTERACTABLE_TYPES.EXIT,
+        ...base
+      });
+    } else if (item.type === "savePoint") {
+      list.push({
+        type: INTERACTABLE_TYPES.SAVE_POINT,
+        worldId: manifest.id,
+        ...base
+      });
+    } else if (item.type === "submitPoint") {
+      list.push({
+        type: INTERACTABLE_TYPES.SUBMIT_POINT,
+        worldId: manifest.id,
+        submissionType: item.submissionType || "full",
+        ...base
+      });
+    }
+  }
+
+  return list;
+}
+
+function createHomeScene(pack) {
+  const manifest = pack.manifest;
+  const sceneName = "home_" + manifest.id;
+
+  return {
+    name: sceneName,
+    pack: pack,
+    room: null,
+    player: null,
+    collisionObjects: [],
+    interactables: [],
+    roomOffset: { x: 0, y: 0 },
+    currentInteractable: null,
+    dialogue: { active: false, key: null, lineIndex: 0 },
+    lastSaveMessage: "",
+    hasExit: false,
+
+    create() {
+      this.room = buildRoomFromConfig(pack.home);
+      this.collisionObjects = buildCollisionFromMap(this.room);
+      this.player = new Player(this.room.spawn.x, this.room.spawn.y);
+      this.interactables = buildInteractablesFromConfig(pack.home, manifest);
+      this.hasExit = this.interactables.some(function (item) {
+        return item.type === INTERACTABLE_TYPES.EXIT;
+      });
+      this.roomOffset.x = (canvas.width - this.room.pixelWidth) / 2;
+      this.roomOffset.y = (canvas.height - this.room.pixelHeight) / 2;
+      this.lastSaveMessage = "";
+      gameState.currentScene = sceneName;
+    },
+
+    resolveDialogue(dialogueKey) {
+      return getDialogueEntry(dialogueKey, pack);
+    },
+
+    openDialogue(dialogueKey) {
+      this.dialogue.active = true;
+      this.dialogue.key = dialogueKey;
+      this.dialogue.lineIndex = 0;
+    },
+
+    closeDialogue() {
+      this.dialogue.active = false;
+      this.dialogue.key = null;
+      this.dialogue.lineIndex = 0;
+    },
+
+    updateDialogue() {
+      const data = this.resolveDialogue(this.dialogue.key);
+      if (!data) {
+        this.closeDialogue();
+        return;
+      }
+      if (input.isPressed("Escape")) {
+        this.closeDialogue();
+        return;
+      }
+      if (input.isPressed("Enter") || input.isPressed("KeyE")) {
+        this.dialogue.lineIndex += 1;
+        if (this.dialogue.lineIndex >= data.lines.length) {
+          this.closeDialogue();
+        }
+      }
+    },
+
+    handleInteract(interactable) {
+      if (interactable.type === INTERACTABLE_TYPES.EXIT) {
+        sceneManager.changeScene(typeof window !== "undefined" && window.FVGD_STANDALONE ? "standaloneMenu" : "overworld");
+        return;
+      }
+      if (interactable.type === INTERACTABLE_TYPES.PORTAL) {
+        const level = getStudentLevel(interactable.levelId);
+        if (level) {
+          // Read the mode from the level, so one home portal supports either template.
+          const gameScene = level.mode === "ranch" ? ranchScene : level.mode === "football" ? footballScene : level.mode === "soccer" ? soccerScene : level.mode === "basketball" ? basketballScene : level.mode === "sports" ? sportsScene : level.mode === "arena" ? arenaScene : level.mode === "topdown" ? topdownScene : platformerScene;
+          gameScene.pendingRewardId = interactable.rewardId || manifest.rewardId;
+          gameScene.pendingLevelId = interactable.levelId;
+          gameScene.returnScene = sceneName;
+          sceneManager.changeScene(gameScene.name);
+        } else if (interactable.dialogueKey) {
+          this.openDialogue(interactable.dialogueKey);
+        } else {
+          this.openDialogue("portalNotReady");
+        }
+        return;
+      }
+      if (interactable.type === INTERACTABLE_TYPES.SAVE_POINT) {
+        saveGameProgress();
+        this.lastSaveMessage = "Game saved!";
+        if (typeof logEvent === "function") {
+          logEvent("save", interactable.worldId || manifest.id, {});
+        }
+        return;
+      }
+      if (interactable.type === INTERACTABLE_TYPES.SUBMIT_POINT) {
+        if (typeof window !== "undefined" && window.FVGD_STANDALONE) {
+          this.lastSaveMessage = "Local copy: share your project folder with your teacher.";
+        } else if (typeof submitWorldForReview === "function") {
+          submitWorldForReview(manifest, "full");
+          this.lastSaveMessage = "Submitted for teacher review!";
+        } else {
+          this.lastSaveMessage = "Submit (connect Supabase to sync)";
+        }
+        return;
+      }
+      if (interactable.type === INTERACTABLE_TYPES.NPC && interactable.dialogueKey) {
+        this.openDialogue(interactable.dialogueKey);
+      }
+    },
+
+    update() {
+      if (isTransitionBlockingInput()) {
+        return;
+      }
+      if (this.dialogue.active) {
+        this.updateDialogue();
+        return;
+      }
+      // Safety net for a home that forgot its exit tile.
+      if (!this.hasExit && input.isPressed("Escape")) {
+        sceneManager.changeScene(typeof window !== "undefined" && window.FVGD_STANDALONE ? "standaloneMenu" : "overworld");
+        return;
+      }
+      this.player.updateTopDown(this.collisionObjects, false);
+      this.currentInteractable = findClosestInteractable(this.player, this.interactables);
+      if (this.currentInteractable && input.isPressed("KeyE")) {
+        this.handleInteract(this.currentInteractable);
+      }
+      if (this.lastSaveMessage) {
+        this._saveMsgTimer = (this._saveMsgTimer || 0) + 1;
+        if (this._saveMsgTimer > 120) {
+          this.lastSaveMessage = "";
+          this._saveMsgTimer = 0;
+        }
+      }
+    },
+
+    draw(ctx) {
+      ctx.fillStyle = "#0d0d1a";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      const ox = this.roomOffset.x;
+      const oy = this.roomOffset.y;
+      const layer = this.room.layers.ground;
+      const tileSize = this.room.tileSize;
+
+      for (let y = 0; y < this.room.height; y++) {
+        for (let x = 0; x < this.room.width; x++) {
+          const tileId = layer[y * this.room.width + x];
+          const color = getTileColor(tileId);
+          if (!color) continue;
+          ctx.fillStyle = color;
+          ctx.fillRect(ox + x * tileSize, oy + y * tileSize, tileSize, tileSize);
+        }
+      }
+
+      for (let i = 0; i < this.interactables.length; i++) {
+        const item = this.interactables[i];
+        let color = "#cccccc";
+        if (item.type === INTERACTABLE_TYPES.NPC) color = "#f1c40f";
+        else if (item.type === INTERACTABLE_TYPES.PORTAL) color = "#8e44ad";
+        else if (item.type === INTERACTABLE_TYPES.EXIT) color = "#e74c3c";
+        else if (item.type === INTERACTABLE_TYPES.SAVE_POINT) color = "#2ecc71";
+        else if (item.type === INTERACTABLE_TYPES.SUBMIT_POINT) color = "#1abc9c";
+        ctx.fillStyle = color;
+        ctx.fillRect(ox + item.x, oy + item.y, item.width, item.height);
+      }
+
+      const px = ox + this.player.x;
+      const py = oy + this.player.y;
+      ctx.fillStyle = "#3a7bd5";
+      ctx.fillRect(px, py, this.player.width, this.player.height);
+
+      if (this.currentInteractable && !this.dialogue.active) {
+        let prompt = "Press E to interact";
+        const t = this.currentInteractable.type;
+        if (t === INTERACTABLE_TYPES.EXIT) prompt = typeof window !== "undefined" && window.FVGD_STANDALONE ? "Press E for the game menu" : "Press E to exit to overworld";
+        else if (t === INTERACTABLE_TYPES.NPC) prompt = "Press E to talk to " + this.currentInteractable.name;
+        else if (t === INTERACTABLE_TYPES.PORTAL) prompt = "Press E to enter your game";
+        else if (t === INTERACTABLE_TYPES.SAVE_POINT) prompt = "Press E to save game";
+        else if (t === INTERACTABLE_TYPES.SUBMIT_POINT) prompt = "Press E to submit for review";
+        drawInteractionPrompt(ctx, prompt);
+      } else if (!this.hasExit && !this.dialogue.active) {
+        drawInteractionPrompt(ctx, "No exit placed in this home — press Esc to leave");
+      }
+
+      if (this.lastSaveMessage) {
+        drawInteractionPrompt(ctx, this.lastSaveMessage);
+      }
+
+      if (this.dialogue.active) {
+        const data = this.resolveDialogue(this.dialogue.key);
+        if (data) {
+          drawDialogueBox(ctx, data.speaker, data.lines[this.dialogue.lineIndex]);
+        }
+      }
+
+      drawDebugOverlay(ctx, {
+        sceneName: this.name,
+        playerX: this.player.x,
+        playerY: this.player.y,
+        cameraX: 0,
+        cameraY: 0,
+        collisionCount: this.collisionObjects.length,
+        homeCount: homeRegistry.length
+      });
+    },
+
+    // Dialogue must not stay open when this home is entered again.
+    exit() { this.closeDialogue(); }
+  };
+}
+
+function registerStudentHomeScenes() {
+  for (let i = 0; i < studentManifests.length; i++) {
+    const pack = studentManifests[i];
+    try {
+      sceneManager.register(createHomeScene(pack));
+    } catch (err) {
+      console.error("Could not register home scene for '" + pack.manifest.id + "':", err);
+    }
+  }
+}
+
+</script>
+<script>
+// TEACHER-OWNED: one animation frame — update the active scene, then draw it.
+// The frame is wrapped so a bad pack can never stop the loop from rescheduling.
+let lastTime = 0;
+let frameErrorCount = 0;
+const MAX_FRAME_ERRORS_LOGGED = 10;
+
+function gameLoop(timestamp) {
+  try {
+    runFrame(timestamp);
+  } catch (err) {
+    frameErrorCount += 1;
+    if (frameErrorCount <= MAX_FRAME_ERRORS_LOGGED) {
+      console.error("Frame error (game keeps running):", err);
+      if (frameErrorCount === MAX_FRAME_ERRORS_LOGGED) {
+        console.error("Further frame errors will not be logged.");
+      }
+    }
+  }
+
+  requestAnimationFrame(gameLoop);
+}
+
+function runFrame(timestamp) {
+  const deltaTime = timestamp - lastTime;
+  lastTime = timestamp;
+
+  updateDebugStats(deltaTime);
+  handleDebugInput();
+
+  updateTransition();
+
+  if (!isTransitionBlockingInput()) {
+    sceneManager.update(deltaTime);
+  }
+
+  draw();
+  input.update();
+}
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  sceneManager.draw(ctx);
+  drawTransition(ctx);
+  drawPackReport(ctx);
+}
+
+</script>
+<script>
+// TEACHER-OWNED: boot the same home/game scenes used by the Overworld.
+// The generated settings choose one pack; no student-specific engine fork exists.
+runPackRegistryChecks();
+refreshHomeRegistry();
+const exportedPack = getStudentPack(window.FVGD_STANDALONE.packId);
+if (!exportedPack) {
+  throw new Error("Exported pack was rejected. Check the console for its validation errors.");
+}
+sceneManager.register(standaloneMenu);
+// Keep the existing error fallback usable without shipping a class map scene.
+sceneManager.scenes.overworld = standaloneMenu;
+sceneManager.register(platformerScene);
+sceneManager.register(topdownScene);
+sceneManager.register(arenaScene);
+sceneManager.register(sportsScene);
+sceneManager.register(basketballScene);
+sceneManager.register(soccerScene);
+sceneManager.register(footballScene);
+sceneManager.register(ranchScene);
+registerStudentHomeScenes();
+loadLocal(1);
+markHomeVisited(exportedPack.manifest.id);
+sceneManager.changeSceneImmediate(standaloneHomeName());
+requestAnimationFrame(gameLoop);
+
+</script>
+<script src="epoch-rpg.js"></script>
+</body></html>

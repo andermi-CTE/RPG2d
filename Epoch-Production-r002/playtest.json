@@ -1,0 +1,21 @@
+{
+  "checks": [
+    "four gates and return",
+    "shop and inn",
+    "water, encounters, attack, herb, escape, battle pause",
+    "tower victory, experience, level up, quest return",
+    "save",
+    "restart and completed tower",
+    "saved stats reload",
+    "defeat recovery and gold penalty"
+  ],
+  "hero": {
+    "hp": 30,
+    "maxHP": 30,
+    "level": 2,
+    "xp": 12,
+    "gold": 10,
+    "herbs": 0,
+    "tower": true
+  }
+}
