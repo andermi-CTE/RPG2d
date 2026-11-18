@@ -103,7 +103,7 @@ registerStudentPack({
     "mission": {
       "speaker": "Town guide",
       "lines": [
-        "Change Welcome to Epoch. The Tower Sentinel waits northeast of town.",
+        "Welcome to Epoch. The Tower Sentinel waits northeast of town.",
         "Use WASD or arrows to walk. Press E at a road to explore.",
         "In battle: 1 attacks, 2 uses a healing herb, 3 escapes ordinary enemies.",
         "The inn restores HP for 3 gold; the shop sells herbs for 3 gold.",
