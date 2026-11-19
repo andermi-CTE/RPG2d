@@ -107,8 +107,10 @@ registerStudentPack({
         "Use WASD or arrows to walk. Press E at a road to explore.",
         "In battle: 1 attacks, 2 uses a healing herb, 3 escapes ordinary enemies.",
         "The inn restores HP for 3 gold; the shop sells herbs for 3 gold.",
+        "test line",
         "Defeat the sentinel, then return to town. Use the save station to save RPG stats.",
-        "Don't forgot to come back"
+        "Don't forgot to come back",
+        "ya here"
       ]
     }
   },
