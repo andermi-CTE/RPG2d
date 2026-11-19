@@ -101,7 +101,7 @@ registerStudentPack({
   },
   "dialogue": {
     "mission": {
-      "speaker": "Town guide",
+      "speaker": "The Oracle",
       "lines": [
         "Welcome to Epoch. The Tower Sentinel waits northeast of town.",
         "Use WASD or arrows to walk. Press E at a road to explore.",
@@ -114,7 +114,8 @@ registerStudentPack({
         "Don't forgot to come back",
         "ya here",
         "seeya",
-        "test line 4"
+        "test line 4",
+        "another test line"
       ]
     }
   },
